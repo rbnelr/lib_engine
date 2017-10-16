@@ -48,13 +48,13 @@ struct Shader {
 #endif
 
 static const char* shad_vert = R"_SHAD(
-	uniform		mat4	MVP;
+	uniform		mat2	MVP;
 	attribute	vec3	vCol;
 	attribute	vec2	vPos;
 	varying		vec3	color;
 	
 	void main() {
-		gl_Position = MVP * vec4(vPos, 0.0, 1.0);
+		gl_Position = vec4(MVP * vPos, 0.0, 1.0);
 		color = vCol;
 	}
 )_SHAD";
@@ -106,42 +106,8 @@ static void setup_gl () {
 	
 }
 
-static GLFWwindow*	wnd;
-
-static void draw_frame () {
-	
-	iv2 wnd_dim;
-	v2	wnd_dim_aspect;
-	{
-		glfwGetFramebufferSize(wnd, &wnd_dim.x, &wnd_dim.y);
-		
-		v2 tmp = cast(v2, wnd_dim);
-		wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
-	}
-	
-	glViewport(0, 0, wnd_dim.x, wnd_dim.y);
-	glClear(GL_COLOR_BUFFER_BIT);
-	
-	f32 t = (f32)glfwGetTime();
-	m4	MVP = m4::row(	wnd_dim_aspect.y,0,0,0,
-						0,1,0,0,
-						0,0,1,0,
-						0,0,0,1	);
-	MVP *= rotate4_Z(t * deg(30.0f));
-	
-	glUseProgram(program);
-	glUniformMatrix4fv(mvp_location, 1, GL_FALSE, &MVP.arr[0][0]);
-	glDrawArrays(GL_TRIANGLES, 0, 3);
-	
-	glfwSwapBuffers(wnd);
-	
-}
-
 static void glfw_error_proc(int err, const char* msg) {
 	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
-}
-static void wnd_refresh_proc (GLFWwindow* wnd) { // to keep drawing while resizing window, does not work for moving, though
-	draw_frame();
 }
 
 int main (int argc, char** argv) {
@@ -154,10 +120,8 @@ int main (int argc, char** argv) {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,	1);
 	//glfwWindowHint(GLFW_OPENGL_PROFILE,			GLFW_OPENGL_CORE_PROFILE);
 	
-	wnd = glfwCreateWindow(1280, 720, "GLFW test", NULL, NULL);
+	GLFWwindow*	wnd = glfwCreateWindow(1280, 720, "GLFW test", NULL, NULL);
 	dbg_assert(wnd);
-	
-	glfwSetWindowRefreshCallback(wnd, wnd_refresh_proc);
 	
 	glfwMakeContextCurrent(wnd);
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
@@ -172,7 +136,26 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		draw_frame();
+		iv2 wnd_dim;
+		v2	wnd_dim_aspect;
+		{
+			glfwGetFramebufferSize(wnd, &wnd_dim.x, &wnd_dim.y);
+			
+			v2 tmp = cast(v2, wnd_dim);
+			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
+		}
+		
+		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
+		glClear(GL_COLOR_BUFFER_BIT);
+		
+		f32 t = (f32)glfwGetTime();
+		m2 to_clip = scale2( v2(wnd_dim_aspect.y,1) ) * rotate2_Z(t * deg(30.0f));
+		
+		glUseProgram(program);
+		glUniformMatrix2fv(mvp_location, 1, GL_FALSE, &to_clip.arr[0][0]);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		
+		glfwSwapBuffers(wnd);
 		
 	}
 	

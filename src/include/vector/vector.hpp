@@ -85,6 +85,8 @@ public:
 	static constexpr M3 ident () {								return row(1,0,0, 0,1,0, 0,0,1); }
 	explicit constexpr M3 (M2 m): arr{V3(m.arr[0], 0), V3(m.arr[1], 0), V3(0,0,1)} {}
 	
+	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
+	
 	M3& operator*= (M3 r);
 };
 struct M4 {
@@ -103,6 +105,9 @@ public:
 									T m, T n, T o, T p ) {		return M4{V4(a,e,i,m),V4(b,f,j,n),V4(c,g,k,o),V4(d,h,l,p)}; }
 	static constexpr M4 ident () {								return row(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1); }
 	explicit constexpr M4 (M3 m): arr{V4(m.arr[0], 0), V4(m.arr[1], 0), V4(m.arr[2], 0), V4(0,0,0,1)} {}
+	
+	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
+	M3 m3 () const {											return M3::column( arr[0].xyz(), arr[1].xyz(), arr[2].xyz() ); }
 	
 	M4& operator*= (M4 r);
 };
@@ -161,6 +166,21 @@ M4& M4::operator*= (M4 r) {
 	return *this = *this * r;
 }
 
+static M2 scale2 (V2 v) {
+	return M2::column(	V2(v.x,0),
+						V2(0,v.y) );
+}
+static M2 rotate2_Z (T ang) {
+	auto sc = sin_cos(ang);
+	return M2::row(	+sc.c,	-sc.s,
+					+sc.s,	+sc.c );
+}
+
+static M3 scale3 (V3 v) {
+	return M3::column(	V3(v.x,0,0),
+						V3(0,v.y,0),
+						V3(0,0,v.z) );
+}
 static M3 rotate3_X (T ang) {
 	auto sc = sin_cos(ang);
 	return M3::row(	1,		0,		0,
@@ -178,6 +198,19 @@ static M3 rotate3_Z (T ang) {
 	return M3::row(	+sc.c,	-sc.s,	0,
 					+sc.s,	+sc.c,	0,
 					0,		0,		1);
+}
+
+static M4 translate4 (V3 v) {
+	return M4::column(	V4(1,0,0,0),
+						V4(0,1,0,0),
+						V4(0,0,1,0),
+						V4(v,1) );
+}
+static M4 scale4 (V4 v) {
+	return M4::column(	V4(v.x,0,0,0),
+						V4(0,v.y,0,0),
+						V4(0,0,v.z,0),
+						V4(0,0,0,v.w) );
 }
 static M4 rotate4_X (T ang) {
 	auto sc = sin_cos(ang);
@@ -199,13 +232,6 @@ static M4 rotate4_Z (T ang) {
 					+sc.s,	+sc.c,	0,		0,
 					0,		0,		1,		0,
 					0,		0,		0,		1 );
-}
-
-static M4 translate4 (V3 v) {
-	return M4::column(	V4(1,0,0,0),
-						V4(0,1,0,0),
-						V4(0,0,1,0),
-						V4(v,1) );
 }
 
 #undef T
