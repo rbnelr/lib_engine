@@ -1,4 +1,28 @@
 
+#define INL FORCEINLINE
+
+//
+#define T	bool
+#define V2	bv2
+#define V3	bv3
+#define V4	bv4
+#define BOOLVEC	1
+	
+	#include "vector_tv2.hpp"
+	//#include "vector_tv3.hpp"
+	//#include "vector_tv4.hpp"
+	
+#undef T
+#undef V2
+#undef V3
+#undef V4
+#undef BOOLVEC
+
+#define BOOLVEC	0
+#define BV2	bv2
+#define BV3	bv3
+#define BV4	bv4
+
 //
 #define T	f32
 #define V2	fv2
@@ -34,6 +58,7 @@
 #define V2	s32v2
 #define V3	s32v3
 #define V4	s32v4
+#define I_TO_F_CONV	1
 	
 	#include "vector_tv2.hpp"
 	#include "vector_tv3.hpp"
@@ -43,6 +68,7 @@
 #undef V2
 #undef V3
 #undef V4
+#undef I_TO_F_CONV
 
 //
 #define T	f32
@@ -53,12 +79,17 @@
 #define M3	fm3
 #define M4	fm4
 
+#undef BOOLVEC
+#undef BV2
+#undef BV3
+#undef BV4
+
 struct M2 {
 	V2 arr[2];
 	
-	explicit M2 () {}
+	INL explicit M2 () {}
 private: // don't allow a contructor with column mayor order because it could be confusing, use static functions row and column instead, still need a contructor though, to implement the functions below
-	explicit constexpr M2 (V2 a, V2 b): arr{a,b} {}
+	INL explicit constexpr M2 (V2 a, V2 b): arr{a,b} {}
 public:
 	
 	static constexpr M2 row (		V2 a, V2 b ) {				return M2{V2(a.x,b.x),V2(b.y,b.y)}; }
@@ -72,9 +103,9 @@ public:
 struct M3 {
 	V3 arr[3];
 	
-	explicit M3 () {}
+	INL explicit M3 () {}
 private: //
-	explicit constexpr M3 (V3 a, V3 b, V3 c): arr{a,b,c} {}
+	INL explicit constexpr M3 (V3 a, V3 b, V3 c): arr{a,b,c} {}
 public:
 	
 	static constexpr M3 row (		V3 a, V3 b, V3 c ) {		return M3{V3(a.x,b.x,c.x),V3(a.y,b.y,c.y),V3(a.z,b.z,c.z)}; }
@@ -92,9 +123,9 @@ public:
 struct M4 {
 	V4 arr[4];
 	
-	explicit M4 () {}
+	INL explicit M4 () {}
 private: //
-	explicit constexpr M4 (V4 a, V4 b, V4 c, V4 d): arr{a,b,c,d} {}
+	INL explicit constexpr M4 (V4 a, V4 b, V4 c, V4 d): arr{a,b,c,d} {}
 public:
 
 	static constexpr M4 row (		V4 a, V4 b, V4 c, V4 d ) {	return M4{V4(a.x,b.x,c.x,d.x),V4(a.y,b.y,c.y,d.y),V4(a.z,b.z,c.z,d.z),V4(a.w,b.w,c.w,d.w)}; }
@@ -166,11 +197,118 @@ M4& M4::operator*= (M4 r) {
 	return *this = *this * r;
 }
 
+static M2 inverse (M2 m) {
+	T inv_det = T(1) / ( (m.arr[0].x * m.arr[1].y) -(m.arr[1].x * m.arr[0].y) );
+	
+	M2 ret;
+	ret.arr[0].x = m.arr[1].y * +inv_det;
+	ret.arr[0].y = m.arr[0].y * -inv_det;
+	ret.arr[1].x = m.arr[1].x * -inv_det;
+	ret.arr[1].y = m.arr[0].x * +inv_det;
+	return ret;
+}
+
+#if 0
+template <typename T, precision P>
+GLM_FUNC_QUALIFIER tmat2x2<T, P> compute_inverse(tmat2x2<T, P> const & m)
+{
+	T OneOverDeterminant = static_cast<T>(1) / (
+		+ m[0][0] * m[1][1]
+		- m[1][0] * m[0][1]);
+
+	tmat2x2<T, P> Inverse(
+		+ m[1][1] * OneOverDeterminant,
+		- m[0][1] * OneOverDeterminant,
+		- m[1][0] * OneOverDeterminant,
+		+ m[0][0] * OneOverDeterminant);
+
+	return Inverse;
+}
+template <typename T, precision P>
+GLM_FUNC_QUALIFIER tmat3x3<T, P> compute_inverse(tmat3x3<T, P> const & m)
+{
+	T OneOverDeterminant = static_cast<T>(1) / (
+		+ m[0][0] * (m[1][1] * m[2][2] - m[2][1] * m[1][2])
+		- m[1][0] * (m[0][1] * m[2][2] - m[2][1] * m[0][2])
+		+ m[2][0] * (m[0][1] * m[1][2] - m[1][1] * m[0][2]));
+
+	tmat3x3<T, P> Inverse(uninitialize);
+	Inverse[0][0] = + (m[1][1] * m[2][2] - m[2][1] * m[1][2]) * OneOverDeterminant;
+	Inverse[1][0] = - (m[1][0] * m[2][2] - m[2][0] * m[1][2]) * OneOverDeterminant;
+	Inverse[2][0] = + (m[1][0] * m[2][1] - m[2][0] * m[1][1]) * OneOverDeterminant;
+	Inverse[0][1] = - (m[0][1] * m[2][2] - m[2][1] * m[0][2]) * OneOverDeterminant;
+	Inverse[1][1] = + (m[0][0] * m[2][2] - m[2][0] * m[0][2]) * OneOverDeterminant;
+	Inverse[2][1] = - (m[0][0] * m[2][1] - m[2][0] * m[0][1]) * OneOverDeterminant;
+	Inverse[0][2] = + (m[0][1] * m[1][2] - m[1][1] * m[0][2]) * OneOverDeterminant;
+	Inverse[1][2] = - (m[0][0] * m[1][2] - m[1][0] * m[0][2]) * OneOverDeterminant;
+	Inverse[2][2] = + (m[0][0] * m[1][1] - m[1][0] * m[0][1]) * OneOverDeterminant;
+
+	return Inverse;
+}
+template <typename T, precision P>
+GLM_FUNC_QUALIFIER tmat4x4<T, P> compute_inverse(tmat4x4<T, P> const & m)
+{
+	T Coef00 = m[2][2] * m[3][3] - m[3][2] * m[2][3];
+	T Coef02 = m[1][2] * m[3][3] - m[3][2] * m[1][3];
+	T Coef03 = m[1][2] * m[2][3] - m[2][2] * m[1][3];
+
+	T Coef04 = m[2][1] * m[3][3] - m[3][1] * m[2][3];
+	T Coef06 = m[1][1] * m[3][3] - m[3][1] * m[1][3];
+	T Coef07 = m[1][1] * m[2][3] - m[2][1] * m[1][3];
+
+	T Coef08 = m[2][1] * m[3][2] - m[3][1] * m[2][2];
+	T Coef10 = m[1][1] * m[3][2] - m[3][1] * m[1][2];
+	T Coef11 = m[1][1] * m[2][2] - m[2][1] * m[1][2];
+
+	T Coef12 = m[2][0] * m[3][3] - m[3][0] * m[2][3];
+	T Coef14 = m[1][0] * m[3][3] - m[3][0] * m[1][3];
+	T Coef15 = m[1][0] * m[2][3] - m[2][0] * m[1][3];
+
+	T Coef16 = m[2][0] * m[3][2] - m[3][0] * m[2][2];
+	T Coef18 = m[1][0] * m[3][2] - m[3][0] * m[1][2];
+	T Coef19 = m[1][0] * m[2][2] - m[2][0] * m[1][2];
+
+	T Coef20 = m[2][0] * m[3][1] - m[3][0] * m[2][1];
+	T Coef22 = m[1][0] * m[3][1] - m[3][0] * m[1][1];
+	T Coef23 = m[1][0] * m[2][1] - m[2][0] * m[1][1];
+
+	tvec4<T, P> Fac0(Coef00, Coef00, Coef02, Coef03);
+	tvec4<T, P> Fac1(Coef04, Coef04, Coef06, Coef07);
+	tvec4<T, P> Fac2(Coef08, Coef08, Coef10, Coef11);
+	tvec4<T, P> Fac3(Coef12, Coef12, Coef14, Coef15);
+	tvec4<T, P> Fac4(Coef16, Coef16, Coef18, Coef19);
+	tvec4<T, P> Fac5(Coef20, Coef20, Coef22, Coef23);
+
+	tvec4<T, P> Vec0(m[1][0], m[0][0], m[0][0], m[0][0]);
+	tvec4<T, P> Vec1(m[1][1], m[0][1], m[0][1], m[0][1]);
+	tvec4<T, P> Vec2(m[1][2], m[0][2], m[0][2], m[0][2]);
+	tvec4<T, P> Vec3(m[1][3], m[0][3], m[0][3], m[0][3]);
+
+	tvec4<T, P> Inv0(Vec1 * Fac0 - Vec2 * Fac1 + Vec3 * Fac2);
+	tvec4<T, P> Inv1(Vec0 * Fac0 - Vec2 * Fac3 + Vec3 * Fac4);
+	tvec4<T, P> Inv2(Vec0 * Fac1 - Vec1 * Fac3 + Vec3 * Fac5);
+	tvec4<T, P> Inv3(Vec0 * Fac2 - Vec1 * Fac4 + Vec2 * Fac5);
+
+	tvec4<T, P> SignA(+1, -1, +1, -1);
+	tvec4<T, P> SignB(-1, +1, -1, +1);
+	tmat4x4<T, P> Inverse(Inv0 * SignA, Inv1 * SignB, Inv2 * SignA, Inv3 * SignB);
+
+	tvec4<T, P> Row0(Inverse[0][0], Inverse[1][0], Inverse[2][0], Inverse[3][0]);
+
+	tvec4<T, P> Dot0(m[0] * Row0);
+	T Dot1 = (Dot0.x + Dot0.y) + (Dot0.z + Dot0.w);
+
+	T OneOverDeterminant = static_cast<T>(1) / Dot1;
+
+	return Inverse * OneOverDeterminant;
+}
+#endif
+
 static M2 scale2 (V2 v) {
 	return M2::column(	V2(v.x,0),
 						V2(0,v.y) );
 }
-static M2 rotate2_Z (T ang) {
+static M2 rotate2 (T ang) {
 	auto sc = sin_cos(ang);
 	return M2::row(	+sc.c,	-sc.s,
 					+sc.s,	+sc.c );
@@ -206,11 +344,11 @@ static M4 translate4 (V3 v) {
 						V4(0,0,1,0),
 						V4(v,1) );
 }
-static M4 scale4 (V4 v) {
+static M4 scale4 (V3 v) {
 	return M4::column(	V4(v.x,0,0,0),
 						V4(0,v.y,0,0),
 						V4(0,0,v.z,0),
-						V4(0,0,0,v.w) );
+						V4(0,0,0,1) );
 }
 static M4 rotate4_X (T ang) {
 	auto sc = sin_cos(ang);
@@ -243,24 +381,93 @@ static M4 rotate4_Z (T ang) {
 #undef M4
 
 //
-#define cast(T, val)	_cast<T>(val)
-#define round(T, val)	_round<T>(val)
+#define vround(T, val)	_vround<T>(val)
 
-template <typename T> static T _round (fv2 v);
-template<> s32v2 _round<s32v2> (fv2 v) {
-	fv2 tmp = v +fv2(0.5f);
-	return s32v2((s32)tmp.x, (s32)tmp.y);
+template <typename T> static T _vround (fv2 v);
+template<> s32v2 _vround<s32v2> (fv2 v) {
+	return s32v2((s32)round(v.x), (s32)round(v.y));
 }
-
-template <typename T> static T _cast (s32v2 v);
-template<> fv2 _cast<fv2> (s32v2 v) { return fv2((f32)v.x, (f32)v.y); }
 
 //
-#if 0
-static constexpr fv3 srgb (f32 r, f32 g, f32 b) {
-	return fv3(r/255, g/255, b/255);
+template <typename T>	static T to_linear (T srgb) {
+	if (srgb <= T(0.0404482362771082)) {
+		return srgb * T(1/12.92);
+	} else {
+		return pow( (srgb +T(0.055)) * T(1/1.055), T(2.4) );
+	}
 }
-static constexpr fv3 srgb (f32 all) {
-	return fv3(all/255);
+template <typename T>	static T to_srgb (T linear) {
+	if (linear <= T(0.00313066844250063)) {
+		return linear * T(12.92);
+	} else {
+		return ( T(1.055) * pow(linear, T(1/2.4)) ) -T(0.055);
+	}
 }
-#endif
+static fv3 to_linear (fv3 srgb) {
+	return fv3( to_linear(srgb.x), to_linear(srgb.y), to_linear(srgb.z) );
+}
+static fv3 to_srgb (fv3 linear) {
+	return fv3( to_srgb(linear.x), to_srgb(linear.y), to_srgb(linear.z) );
+}
+
+static fv3 srgb (f32 x, f32 y, f32 z) {	return to_linear(fv3(x,y,z) * fv3(1.0f/255.0f)); }
+static fv3 srgb (f32 all) {				return srgb(all,all,all); }
+
+static fv3 hsl_to_rgb (fv3 hsl) {
+	#if 0
+	// modified from http://www.easyrgb.com/en/math.php
+	f32 H = hsl.x;
+	f32 S = hsl.y;
+	f32 L = hsl.z;
+	
+	auto Hue_2_RGB = [] (f32 a, f32 b, f32 vH) {
+		if (vH < 0) vH += 1;
+		if (vH > 1) vH -= 1;
+		if ((6 * vH) < 1) return a +(b -a) * 6 * vH;
+		if ((2 * vH) < 1) return b;
+		if ((3 * vH) < 2) return a +(b -a) * ((2.0f/3) -vH) * 6;
+		return a;
+	};
+	
+	fv3 rgb;
+	if (S == 0) {
+		rgb = fv3(L);
+	} else {
+		f32 a, b;
+		
+		if (L < 0.5f)	b = L * (1 +S);
+		else			b = (L +S) -(S * L);
+		
+		a = 2 * L -b;
+		
+		rgb = fv3(	Hue_2_RGB(a, b, H +(1.0f / 3)),
+					Hue_2_RGB(a, b, H),
+					Hue_2_RGB(a, b, H -(1.0f / 3)) );
+	}
+	
+	return to_linear(rgb);
+	#else
+	f32 hue = hsl.x;
+	f32 sat = hsl.y;
+	f32 lht = hsl.z;
+	
+	f32 hue6 = hue*6.0f;
+	
+	f32 c = sat*(1.0f -abs(2.0f*lht -1.0f));
+	f32 x = c * (1.0f -abs(mod(hue6, 2.0f) -1.0f));
+	f32 m = lht -(c/2.0f);
+	
+	fv3 rgb;
+	if (		hue6 < 1.0f )	rgb = fv3(c,x,0);
+	else if (	hue6 < 2.0f )	rgb = fv3(x,c,0);
+	else if (	hue6 < 3.0f )	rgb = fv3(0,c,x);
+	else if (	hue6 < 4.0f )	rgb = fv3(0,x,c);
+	else if (	hue6 < 5.0f )	rgb = fv3(x,0,c);
+	else						rgb = fv3(c,0,x);
+	rgb += m;
+	
+	return to_linear(rgb);
+	#endif
+}
+
+#undef INL

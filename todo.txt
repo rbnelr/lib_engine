@@ -1,7 +1,14 @@
 DONE:
  
+ Got static linking of GLFW working
+ -> have to compile as C as seperate .o/.obj file/s
+ -> fastest complie (while always rebuilding all code) is to include all .c files into one .c file and compile that to a seperate .o/.obj file and link it to the main object
+ -> unused function stripping works, ~90KB executable
+ 
 TODO
 -FEATURES:
+ 
+ 
  
 -BUGS:
  

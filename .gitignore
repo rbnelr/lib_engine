@@ -1,3 +1,7 @@
+deps/*
+!deps/glad/
+!deps/stb/
+
 *.BACKUP
 .vs/
 Debug/
@@ -8,5 +12,4 @@ Debug/
 *.vsp
 *.pdb/
 *.pdb
-src/glfw*
-src/glad*
+*.csv

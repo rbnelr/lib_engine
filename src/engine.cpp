@@ -1,10 +1,11 @@
 
-#define _USING_V110_SDK71_ 1
-#include "windows.h"
+#include <cstdio>
+#include <array>
+#include <vector>
+#include <string>
 
 #include "types.hpp"
 #include "lang_helpers.hpp"
-#include "assert.hpp"
 #include "math.hpp"
 #include "vector/vector.hpp"
 
@@ -18,51 +19,40 @@ typedef fm2		m2;
 typedef fm3		m3;
 typedef fm4		m4;
 
-#include <cstdio>
-
-#include "glad/glad.c"
+#define _USING_V110_SDK71_ 1
+#include "glad.c"
 #include "GLFW/glfw3.h"
 
+#include "platform_graphics.hpp"
+
 struct Vertex {
-	v2	pos;
+	v3	pos;
 	v3	col;
 };
 
-static constexpr Vertex vertices[3] = {
-	{ v2(-0.6f, -0.4f), v3(1,0,0) },
-	{ v2(+0.6f, -0.4f), v3(0,1,0) },
-	{ v2(+0.0f, +0.6f), v3(0,0,1) },
+static Vertex tetrahedron[1*3] = {
+	{ rotate3_Z(deg(   0)) * v3(1,0,0), v3(1,0,0) },
+	{ rotate3_Z(deg(-120)) * v3(1,0,0), v3(0,1,0) },
+	{ rotate3_Z(deg(-240)) * v3(1,0,0), v3(0,0,1) },
 };
-
-#if 0
-struct Uniform {
-	cstr	name;
-	GLint	location;
-};
-struct Shader {
-	Uniform*	uniforms;
-	cstr		vert_src;
-	cstr		frag_src;
-	GLuint		gl_h;
-};
-#endif
 
 static const char* shad_vert = R"_SHAD(
-	uniform		mat2	MVP;
-	attribute	vec3	vCol;
-	attribute	vec2	vPos;
-	varying		vec3	color;
+	attribute	vec3	col;
+	attribute	vec3	pos;
+	varying		vec3	vs_col;
+	
+	uniform		mat4	MVP;
 	
 	void main() {
-		gl_Position = vec4(MVP * vPos, 0.0, 1.0);
-		color = vCol;
+		gl_Position = MVP * vec4(pos,1);
+		vs_col = col;
 	}
 )_SHAD";
 static const char* shad_frag = R"_SHAD(
-	varying		vec3	color;
+	varying		vec3	vs_col;
 	
 	void main() {
-		gl_FragColor = vec4(color, 1.0);
+		gl_FragColor = vec4(vs_col, 1.0);
 	}
 )_SHAD";
 
@@ -79,7 +69,7 @@ static void setup_gl () {
 	glGenBuffers(1, &vertex_buffer);
 	
 	glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(tetrahedron), tetrahedron, GL_STATIC_DRAW);
 	
 	vertex_shader = glCreateShader(GL_VERTEX_SHADER);
 	glShaderSource(vertex_shader, 1, &shad_vert, NULL);
@@ -95,38 +85,22 @@ static void setup_gl () {
 	glLinkProgram(program);
 	
 	mvp_location = glGetUniformLocation(program, "MVP");
-	vpos_location = glGetAttribLocation(program, "vPos");
-	vcol_location = glGetAttribLocation(program, "vCol");
+	vpos_location = glGetAttribLocation(program, "pos");
+	vcol_location = glGetAttribLocation(program, "col");
 	
 	glEnableVertexAttribArray(vpos_location);
-	glVertexAttribPointer(vpos_location, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 5, (void*) 0);
+	glVertexAttribPointer(vpos_location, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
 	
 	glEnableVertexAttribArray(vcol_location);
-	glVertexAttribPointer(vcol_location, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 5, (void*) (sizeof(float) * 2));
+	glVertexAttribPointer(vcol_location, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
 	
-}
-
-static void glfw_error_proc(int err, const char* msg) {
-	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
 }
 
 int main (int argc, char** argv) {
 	
-	glfwSetErrorCallback(glfw_error_proc);
+	setup_graphics_context();
 	
-	dbg_assert( glfwInit(), "Hello %s", "world" );
-	
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,	3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,	1);
-	//glfwWindowHint(GLFW_OPENGL_PROFILE,			GLFW_OPENGL_CORE_PROFILE);
-	
-	GLFWwindow*	wnd = glfwCreateWindow(1280, 720, "GLFW test", NULL, NULL);
-	dbg_assert(wnd);
-	
-	glfwMakeContextCurrent(wnd);
-	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-	
-	glfwSwapInterval(1);
+	set_vsync(1);
 	
 	setup_gl();
 	
@@ -141,19 +115,47 @@ int main (int argc, char** argv) {
 		{
 			glfwGetFramebufferSize(wnd, &wnd_dim.x, &wnd_dim.y);
 			
-			v2 tmp = cast(v2, wnd_dim);
+			v2 tmp = (v2)wnd_dim;
 			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
 		}
 		
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
-		glClear(GL_COLOR_BUFFER_BIT);
-		
-		f32 t = (f32)glfwGetTime();
-		m2 to_clip = scale2( v2(wnd_dim_aspect.y,1) ) * rotate2_Z(t * deg(30.0f));
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 		
 		glUseProgram(program);
-		glUniformMatrix2fv(mvp_location, 1, GL_FALSE, &to_clip.arr[0][0]);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
+		{
+			v3 cam_pos_world = v3(0,0, 5);
+			m4 world_to_cam = translate4(-cam_pos_world);
+			
+			m4 cam_to_clip;
+			{
+				f32 vfov =			deg(70);
+				f32 clip_near =		deg(1.0f/16);
+				f32 clip_far =		deg(512);
+				
+				v2 frust_scale;
+				frust_scale.y = tan(vfov / 2);
+				frust_scale.x = frust_scale.y * wnd_dim_aspect.x;
+				
+				v2 frust_scale_inv = 1.0f / frust_scale;
+				
+				f32 x = frust_scale_inv.x;
+				f32 y = frust_scale_inv.y;
+				f32 a = (clip_far +clip_near) / (clip_near -clip_far);
+				f32 b = (2.0f * clip_far * clip_near) / (clip_near -clip_far);
+				
+				cam_to_clip = m4::row(
+								x, 0, 0, 0,
+								0, y, 0, 0,
+								0, 0, a, b,
+								0, 0, -1, 0 );
+			}
+			
+			m4 world_to_clip = cam_to_clip * world_to_cam;
+			
+			glUniformMatrix4fv(mvp_location, 1, GL_FALSE, &world_to_clip.arr[0][0]);
+		}
+		glDrawArrays(GL_TRIANGLES, 0, ARRLEN(tetrahedron));
 		
 		glfwSwapBuffers(wnd);
 		

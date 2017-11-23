@@ -37,11 +37,14 @@ typedef float				f32;
 typedef double				f64;
 
 typedef char const*			cstr;
+typedef char				utf8;
+typedef char32_t			utf32;
 
 #define cr const&
 
 ////
 
+#if 0
 union FI32_u {
 	f32		f;
 	u32		i;
@@ -67,3 +70,4 @@ static constexpr u32 reint_flt_as_int (f32 f) {
 static constexpr u64 reint_flt_as_int (f64 f) {
 	return FI64_u(f).i;
 }
+#endif

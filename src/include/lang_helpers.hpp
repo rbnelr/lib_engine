@@ -1,5 +1,5 @@
 
-#define RZ_COMP_GCC			1
+#define RZ_COMP_GCC				1
 #define RZ_COMP_LLVM			2
 #define RZ_COMP_MSVC			3
 // Determining the compiler
@@ -15,7 +15,7 @@
 	#endif
 #endif
 
-#define RZ_ARCH_X64			1
+#define RZ_ARCH_X64				1
 #define RZ_ARCH_ARM_CORTEX_M4	2
 #define RZ_ARCH_ARM_V6_HF		3
 
@@ -30,9 +30,13 @@
 	#define NOINLINE						__declspec(noinline)
 	#define BUILTIN_F32_INF					((float)(1e+300 * 1e+300))
 	#define BUILTIN_F64_INF					(1e+300 * 1e+300)
-	#define BUILTIN_F32_QNAN				__builtin_nanf("0")
-	#define BUILTIN_F64_QNAN				__builtin_nan("0")
 	#define DBGBREAK						__debugbreak()
+	
+	#define F32_INF							((float)(1e+300 * 1e+300))
+	#define F64_INF							(1e+300 * 1e+300)
+	#define F32_QNAN						(0.0f/0.0f)
+	#define F64_QNAN						(0.0/0.0)
+	
 #elif RZ_COMP == RZ_COMP_LLVM
 	#define FORCEINLINE						__attribute__((always_inline)) inline
 	#define NOINLINE						__attribute__((noinline))
@@ -41,13 +45,19 @@
 	#define BUILTIN_F32_QNAN				__builtin_nan("0")
 	#define BUILTIN_F64_QNAN				__builtin_nan("0")
 	#define DBGBREAK						do { asm volatile ("int3"); } while(0)
+		
+	#define F32_INF							(__builtin_inff())
+	#define F64_INF							(__builtin_inf())
+	#define F32_QNAN						__builtin_nan("0")
+	#define F64_QNAN						__builtin_nan("0")
+	
 #elif RZ_COMP == RZ_COMP_GCC
 	#define FORCEINLINE						__attribute__((always_inline)) inline
 	#define NOINLINE						__attribute__((noinline))
-	#define BUILTIN_F32_INF					(__builtin_inff())
-	#define BUILTIN_F64_INF					(__builtin_inf())
-	#define BUILTIN_F32_QNAN				__builtin_nan("0")
-	#define BUILTIN_F64_QNAN				__builtin_nan("0")
+	#define F32_INF							(__builtin_inff())
+	#define F64_INF							(__builtin_inf())
+	#define F32_QNAN						__builtin_nan("0")
+	#define F64_QNAN						__builtin_nan("0")
 	
 	#if RZ_PLATF == RZ_PLATF_GENERIC_WIN
 		#define DBGBREAK					do { __debugbreak(); } while(0)
@@ -56,34 +66,11 @@
 			#define DBGBREAK				do { asm volatile ("bkpt #0"); } while(0)
 		#endif
 	#endif
-#endif
-
-#if RZ_PLATF == RZ_PLATF_GENERIC_WIN
 	
-	#if RZ_DBG // try to not use windows lib directly to simplify porting, but still allow for debugging (Sleep() for ex.)
-		
-		#define DWORD unsigned long
-		#define BOOL int
-		
-		// For debugging
-		__declspec(dllimport) BOOL __stdcall IsDebuggerPresent(void);
-		
-		__declspec(dllimport) void __stdcall Sleep(
-		  DWORD dwMilliseconds
-		);
-		
-		#define IS_DEBUGGER_PRESENT				IsDebuggerPresent()
-		#define DBGBREAK_IF_DEBUGGER_PRESENT	if (IS_DEBUGGER_PRESENT) { DBGBREAK; }
-		#define BREAK_IF_DEBUGGING_ELSE_STALL	if (IS_DEBUGGER_PRESENT) { DBGBREAK; } else { Sleep(100); }
-		
-		static void dbg_sleep (f32 sec) {
-			Sleep( (DWORD)(sec * 1000.0f) );
-		}
-		
-		#undef BOOL
-		#undef DWORD
-		
-	#endif
+	#define F32_INF							(__builtin_inff())
+	#define F64_INF							(__builtin_inf())
+	#define F32_QNAN						__builtin_nan("0")
+	#define F64_QNAN						__builtin_nan("0")
 	
 #endif
 
@@ -93,14 +80,37 @@
 
 #define STATIC_ASSERT(cond) static_assert((cond), STRINGIFY(cond))
 
+#include "types.hpp"
+
 #define ANSI_COLOUR_CODE_RED	"\033[1;31m"
+#define ANSI_COLOUR_CODE_YELLOW	"\033[0;33m"
 #define ANSI_COLOUR_CODE_NC		"\033[0m"
 
+#include <cstdarg>
 
-template <typename T, typename AT, uptr N>
-static constexpr T arrlenof (AT (& arr)[N]) {
-	//static_assert(); // TODO: implement proper check
-	return (T)N;
+#include "assert.hpp"
+
+//
+template<typename CAST_T, typename T>
+static constexpr bool _safe_cast (T x);
+
+template<> constexpr bool _safe_cast<u32, u64> (u64 x) { return x <= 0xffffffffull; }
+template<> constexpr bool _safe_cast<s32, u64> (u64 x) { return x <= 0x7fffffffull; }
+
+#define safe_cast(cast_t, val) _safe_cast<cast_t>(val)
+
+//
+#define ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
+
+static u32 strlen (utf32 const* str) {
+	u32 ret = 0;
+	while (*str++) ++ret;
+	return ret;
+}
+template <u32 N>
+static u32 strlen (utf32 const (& str)[N]) {
+	STATIC_ASSERT(N >= 1);
+	return N -1;
 }
 
 template <typename FUNC>
@@ -119,5 +129,72 @@ static FORCEINLINE At_Scope_Exit<FUNC> operator+(_Defer_Helper, FUNC f) {
 	return At_Scope_Exit<FUNC>(f);
 }
 
-#define defer auto _defer_helper##__COUNTER__ = _Defer_Helper() +[&] () 
+#define CONCAT(a,b) a##b
+
+#define _defer(counter) auto CONCAT(_defer_helper, counter) = _Defer_Helper() +[&] () 
+#define defer _defer(__COUNTER__)
 // use like: defer { lambda code };
+
+#undef DEFINE_ENUM_FLAG_OPS
+#define DEFINE_ENUM_FLAG_OPS(TYPE, UNDERLYING_TYPE) \
+	static FORCEINLINE TYPE& operator|= (TYPE& l, TYPE r) { \
+		return l = (TYPE)((UNDERLYING_TYPE)l | (UNDERLYING_TYPE)r); \
+	} \
+	static FORCEINLINE TYPE& operator&= (TYPE& l, TYPE r) { \
+		return l = (TYPE)((UNDERLYING_TYPE)l & (UNDERLYING_TYPE)r); \
+	} \
+	static FORCEINLINE TYPE operator| (TYPE l, TYPE r) { \
+		return (TYPE)((UNDERLYING_TYPE)l | (UNDERLYING_TYPE)r); \
+	} \
+	static FORCEINLINE TYPE operator& (TYPE l, TYPE r) { \
+		return (TYPE)((UNDERLYING_TYPE)l & (UNDERLYING_TYPE)r); \
+	} \
+	static FORCEINLINE TYPE operator~ (TYPE e) { \
+		return (TYPE)(~(UNDERLYING_TYPE)e); \
+	}
+
+#define DEFINE_ENUM_ITER_OPS(TYPE, UNDERLYING_TYPE) \
+	static FORCEINLINE TYPE& operator++ (TYPE& val) { \
+		return val = (TYPE)((UNDERLYING_TYPE)val +1); \
+	}
+
+template<typename T, typename FUNC>
+static T* lsearch (std::vector<T>& arr, FUNC comp_with) {
+	for (T& x : arr) {
+		if (comp_with(&x)) return &x; // found
+	}
+	return nullptr; // not found
+}
+
+static void _prints (std::string* s, cstr format, va_list vl) { // print 
+	for (;;) {
+		auto ret = vsnprintf(&(*s)[0], s->length()+1, format, vl); // i think i'm technically not allowed to overwrite the null terminator
+		dbg_assert(ret >= 0);
+		bool was_big_enough = (u32)ret < s->length()+1;
+		s->resize((u32)ret);
+		if (was_big_enough) break;
+		// buffer was to small, buffer size was increased
+		// now snprintf has to succeed, so call it again
+	}
+}
+static void prints (std::string* s, cstr format, ...) {
+	va_list vl;
+	va_start(vl, format);
+	
+	_prints(s, format, vl);
+	
+	va_end(vl);
+}
+static std::string prints (cstr format, ...) {
+	va_list vl;
+	va_start(vl, format);
+	
+	std::string ret;
+	ret.reserve(128); // overallocate to prevent calling printf twice in most cases
+	ret.resize(ret.capacity());
+	_prints(&ret, format, vl);
+	
+	va_end(vl);
+	
+	return ret;
+}

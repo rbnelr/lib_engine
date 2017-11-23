@@ -1,6 +1,6 @@
 root = true
 
-[*.{h,hpp,c,cpp,var,bat,txt}]
+[*.{h,hpp,c,cpp,bat,txt}]
 end_of_line = lf
 indent_style = tab
 indent_size = 4
