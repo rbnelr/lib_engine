@@ -205,30 +205,25 @@ static std::string prints (cstr format, ...) {
 	return ret;
 }
 
-// array reference that can be constructed from all possible arrays to allow functions that read arrays to take one type
-template <typename T>
-struct array {
-	T*		arr;
-	uptr	len;
-	
-	template <uptr N>
-	array (T const (& arr)[N]): arr{arr}, len{N} {}
-	array (std::vector<T> cr vec): arr{vec.begin()}, len{vec.size()} {}
-	
-	uptr bytes_size () const { return len * sizeof(T); }
-	
-	T const&	operator[] (uptr indx) const {
-		dbg_assert(indx < len, "Index overflow in array");
-		return arr[indx];
-	}
-	T&			operator[] (uptr indx) {
-		dbg_assert(indx < len, "Index overflow in array");
-		return arr[indx];
-	}
-};
-
 //
-static bool load_text_file (cstr filename, std::string* out) {
+static bool read_entire_file (cstr filename, void* buf, u64 expected_file_size) {
+	FILE* f = fopen(filename, "rb"); // read binary
+	if (!f) return false; // fail
+	
+	defer { fclose(f); };
+	
+	fseek(f, 0, SEEK_END);
+	u64 file_size = ftell(f); // only 32 support for now
+	rewind(f);
+	
+	if (file_size != expected_file_size) return false; // fail
+	
+	auto ret = fread(buf, 1,file_size, f);
+	dbg_assert(ret == file_size);
+	
+	return true;
+}
+static bool read_text_file (cstr filename, std::string* out) {
 	FILE* f = fopen(filename, "rb"); // read binary because i don't want to convert "\r\n" to "\n"
 	if (!f) return false; // fail
 	
@@ -242,6 +237,18 @@ static bool load_text_file (cstr filename, std::string* out) {
 	
 	auto ret = fread(&(*out)[0], 1,file_size, f);
 	dbg_assert(ret == file_size);
+	
+	return true;
+}
+
+static bool overwrite_file (cstr filename, void* buf, u64 write_size) {
+	FILE* f = fopen(filename, "wb"); // write binary (overwrite file if exists / create if not exists)
+	if (!f) return false; // fail
+	
+	defer { fclose(f); };
+	
+	auto ret = fwrite(buf, 1,write_size, f);
+	dbg_assert(ret == write_size);
 	
 	return true;
 }

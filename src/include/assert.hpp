@@ -56,31 +56,6 @@
 		BREAK_IF_DEBUGGING_ELSE_STALL;
 	}
 	
-	static void _failed_dbg_warning (cstr cond) {
-		fprintf(stderr,	ANSI_COLOUR_CODE_YELLOW
-						"dbg_warning failed!\n"
-						"  \"%s\"\n" ANSI_COLOUR_CODE_NC, cond);
-		
-		//BREAK_IF_DEBUGGING_ELSE_STALL;
-	}
-	static void _failed_dbg_warning (cstr cond, cstr msg_format, ...) {
-		
-		fprintf(stderr,	ANSI_COLOUR_CODE_YELLOW
-						"dbg_warning failed!\n"
-						"  \"%s\"\n", cond);
-		
-		va_list vl;
-		va_start(vl, msg_format);
-		
-		vfprintf(stderr, msg_format, vl);
-		
-		va_end(vl);
-		
-		fprintf(stderr,	"\n" ANSI_COLOUR_CODE_NC);
-		
-		//BREAK_IF_DEBUGGING_ELSE_STALL;
-	}
-	
 	#if RZ_COMP == RZ_COMP_MSVC
 		#define MSVC_FUNC_NAME ":" __FUNCTION__
 	#else
@@ -88,11 +63,25 @@
 	#endif
 	
 	#define dbg_assert(cond, ...)	if (!(cond)) _failed_dbg_assert(__FILE__ ":" TO_STRING(__LINE__) MSVC_FUNC_NAME ":\n    '" STRINGIFY(cond), ##__VA_ARGS__)
-	#define dbg_warning(cond, ...)	if (!(cond)) _failed_dbg_warning(__FILE__ ":" TO_STRING(__LINE__) MSVC_FUNC_NAME ":\n    '" STRINGIFY(cond), ##__VA_ARGS__)
 	
 #else
 	
 	#define dbg_assert(cond, ...)	do { (void)(cond); } while (0)
-	#define dbg_warning(cond, ...)	do { (void)(cond); } while (0)
 	
 #endif
+
+static void log_warning (cstr msg_format, ...) {
+	
+	fprintf(stderr,	ANSI_COLOUR_CODE_YELLOW
+					"[WARNING]  ");
+	
+	va_list vl;
+	va_start(vl, msg_format);
+	
+	vfprintf(stderr, msg_format, vl);
+	
+	va_end(vl);
+	
+	fprintf(stderr,	"\n" ANSI_COLOUR_CODE_NC);
+	
+}

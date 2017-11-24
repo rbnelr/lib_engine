@@ -52,8 +52,8 @@ static GLuint load_shader (GLenum type, cstr filepath) {
 	GLuint shad = glCreateShader(type);
 	
 	std::string text;
-	if (!load_text_file(filepath, &text)) {
-		dbg_assert(false, "shader file \"%s\" could not be loaded!", filepath);
+	if (!read_text_file(filepath, &text)) {
+		log_warning("shader file \"%s\" could not be loaded!", filepath);
 		return 0;
 	}
 	
@@ -73,11 +73,11 @@ static GLuint load_shader (GLenum type, cstr filepath) {
 		
 		if (status == GL_FALSE) {
 			// compilation failed
-			dbg_assert(false, "OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath, log_avail ? log_str.c_str() : "<no log available>");
+			log_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath, log_avail ? log_str.c_str() : "<no log available>");
 		} else {
 			// compilation success
 			if (log_avail) {
-				dbg_warning(false, "OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filepath, log_str.c_str());
+				log_warning("OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filepath, log_str.c_str());
 			}
 		}
 	}
@@ -101,11 +101,11 @@ static GLuint link_program (GLuint vert, GLuint frag, cstr vert_filepath, cstr f
 		
 		if (status == GL_FALSE) {
 			// linking failed
-			dbg_assert(false, "OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
+			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
 		} else {
 			// linking success
 			if (log_avail) {
-				dbg_warning(false, "OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_str.c_str());
+				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_str.c_str());
 			}
 		}
 	}
@@ -173,9 +173,9 @@ struct Vbo {
 		glGenBuffers(1, &gl_vbo);
 	}
 	
-	void upload (array<Vertex const> cr data) {
+	void upload (Vertex const* data, u64 data_size) {
 		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-		glBufferData(GL_ARRAY_BUFFER, data.bytes_size(), data.arr, GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, data_size, data, GL_STATIC_DRAW);
 	}
 	
 	void bind (Base_Shader shad) {

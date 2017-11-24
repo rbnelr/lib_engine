@@ -105,8 +105,8 @@ static void setup_gl () {
 	
 	gen_grid_floor();
 	
-	vbo_shapes.upload(tetrahedron);
-	vbo_floor.upload(grid_floor);
+	vbo_shapes.upload(tetrahedron, sizeof(tetrahedron));
+	vbo_floor.upload(grid_floor, sizeof(grid_floor));
 	
 	shad.load();
 	
@@ -114,7 +114,7 @@ static void setup_gl () {
 
 int main (int argc, char** argv) {
 	
-	platform_setup_context();
+	platform_setup_context_and_open_window();
 	
 	set_vsync(1);
 	
@@ -219,8 +219,7 @@ int main (int argc, char** argv) {
 		}
 	}
 	
-	glfwDestroyWindow(wnd);
-	glfwTerminate();
+	platform_terminate();
 	
 	return 0;
 }
