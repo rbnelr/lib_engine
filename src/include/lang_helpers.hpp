@@ -102,6 +102,11 @@ template<> constexpr bool _safe_cast<s32, u64> (u64 x) { return x <= 0x7fffffffu
 //
 #define ARRLEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
+#define EVEN(i)			(((i) % 2) == 0)
+#define ODD(i)			(((i) % 2) == 1)
+
+#define BOOL_XOR(a, b)	(((a) != 0) == ((b) != 0))
+
 static u32 strlen (utf32 const* str) {
 	u32 ret = 0;
 	while (*str++) ++ret;

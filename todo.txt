@@ -8,7 +8,12 @@ DONE:
 TODO
 -FEATURES:
  
+ implement shader loading
+ -probably will need $include command in shader
  
+ implement cubemap skybox instead of clear color
+ -generate this cubemap with a shader
+ -write a nice looking skybox generator shader (try to look like a sky)
  
 -BUGS:
  

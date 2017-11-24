@@ -14,24 +14,24 @@
 	set GLAD=!DEPS!glad/
 	set STB=!DEPS!stb/
 	
-	set GLFW_SRC=!SRC!glfw-3.2.1/src/
+	set GLFW_SRC=!SRC!glfw-3.3/
 	
 	rem can do standart compile all link all build with these
 	set GLFW_SOURCES=-D_GLFW_WIN32=1 ^
-		!GLFW_SRC!init.c ^
-		!GLFW_SRC!window.c ^
-		!GLFW_SRC!context.c ^
-		!GLFW_SRC!input.c ^
-		!GLFW_SRC!monitor.c ^
-		!GLFW_SRC!wgl_context.c ^
-		!GLFW_SRC!egl_context.c ^
-		!GLFW_SRC!win32_init.c ^
-		!GLFW_SRC!win32_monitor.c ^
-		!GLFW_SRC!win32_time.c ^
-		!GLFW_SRC!win32_window.c ^
-		!GLFW_SRC!win32_tls.c ^
-		!GLFW_SRC!win32_joystick.c ^
-		!GLFW_SRC!vulkan.c
+		!GLFW_SRC!src/init.c ^
+		!GLFW_SRC!src/window.c ^
+		!GLFW_SRC!src/context.c ^
+		!GLFW_SRC!src/input.c ^
+		!GLFW_SRC!src/monitor.c ^
+		!GLFW_SRC!src/wgl_context.c ^
+		!GLFW_SRC!src/egl_context.c ^
+		!GLFW_SRC!src/win32_init.c ^
+		!GLFW_SRC!src/win32_monitor.c ^
+		!GLFW_SRC!src/win32_time.c ^
+		!GLFW_SRC!src/win32_window.c ^
+		!GLFW_SRC!src/win32_tls.c ^
+		!GLFW_SRC!src/win32_joystick.c ^
+		!GLFW_SRC!src/vulkan.c
 	
 	set GLFW_OBJECTS=^
 		!ROOT!init.o ^
@@ -94,9 +94,9 @@ rem /main
 	rem cl.exe -nologo /source-charset:utf-8 /DRZ_PLATF=1 /DRZ_ARCH=1 !opt! !warn! /I!SRC!include /I!GLFW!include /I!GLAD! /I!STB! !SRC!!proj!.cpp /Fe!ROOT!!proj!.exe /link KERNEL32.lib OPENGL32.lib !GLFW!lib-vc2015/glfw3dll.lib /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /OPT:REF
 	
 	rem glfw static link
-	cl.exe -nologo !opt! !warn! /I!SRC!glfw-3.2.1/include /I!SRC!glfw-3.2.1/src /c !GLFW_ONE_SRC_FILE!
+	cl.exe -nologo !opt! !warn! /I!GLFW_SRC!include /I!GLFW_SRC!src /c !GLFW_ONE_SRC_FILE!
 	
-	cl.exe -nologo /source-charset:utf-8 /DRZ_PLATF=1 /DRZ_ARCH=1 !opt! !warn! /I!SRC!include /I!GLAD! /I!STB! /I!SRC!glfw-3.2.1/include !SRC!!proj!.cpp glfw_one_source_file.obj /Fe!ROOT!!proj!.exe /link KERNEL32.lib USER32.lib GDI32.lib OPENGL32.lib SHELL32.lib /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /OPT:REF
+	cl.exe -nologo /source-charset:utf-8 /DRZ_PLATF=1 /DRZ_ARCH=1 !opt! !warn! /I!SRC!include /I!GLAD! /I!STB! /I!GLFW_SRC!include !SRC!!proj!.cpp glfw_one_source_file.obj /Fe!ROOT!!proj!.exe /link KERNEL32.lib USER32.lib GDI32.lib OPENGL32.lib SHELL32.lib /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /OPT:REF
 	
 	del *.obj
 	
@@ -124,9 +124,9 @@ rem /vs
 	rem !GCC!g++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLFW!include -I!GLAD! -I!STB! -o !ROOT!!proj!.exe !SRC!!proj!.cpp -L!GLFW!lib-mingw-w64 -lglfw3dll
 	
 	rem glfw static link
-	!GCC!gcc -m64 !opt! !warn! -I!SRC!glfw-3.2.1/include -I!SRC!glfw-3.2.1/src -c !GLFW_ONE_SRC_FILE!
+	!GCC!gcc -m64 !opt! !warn! -I!GLFW_SRC!include -I!GLFW_SRC!src -c !GLFW_ONE_SRC_FILE!
 	
-	!GCC!g++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLAD! -I!STB! -I!SRC!glfw-3.2.1/include -o !ROOT!!proj!.exe !SRC!!proj!.cpp glfw_one_source_file.o -lKERNEL32 -lUSER32 -lGDI32 -lOPENGL32 -lSHELL32
+	!GCC!g++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLAD! -I!STB! -I!GLFW_SRC!include -o !ROOT!!proj!.exe !SRC!!proj!.cpp glfw_one_source_file.o -lKERNEL32 -lUSER32 -lGDI32 -lOPENGL32 -lSHELL32
 	
 	del *.o
 	

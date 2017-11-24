@@ -111,6 +111,16 @@ void _glfwInputCursorPos(_GLFWwindow* window, double xpos, double ypos)
     if (window->callbacks.cursorPos)
         window->callbacks.cursorPos((GLFWwindow*) window, xpos, ypos);
 }
+#if 1 // Modified
+void _glfwInputCursorPosRelative(_GLFWwindow* window, double dx, double dy)
+{
+    if (dx == 0 && dy == 0)
+        return;
+
+    if (window->callbacks.cursorPosRelative)
+        window->callbacks.cursorPosRelative((GLFWwindow*) window, dx, dy);
+}
+#endif
 
 void _glfwInputCursorEnter(_GLFWwindow* window, GLFWbool entered)
 {
@@ -507,6 +517,19 @@ GLFWAPI GLFWcursorposfun glfwSetCursorPosCallback(GLFWwindow* handle,
     _GLFW_SWAP_POINTERS(window->callbacks.cursorPos, cbfun);
     return cbfun;
 }
+
+#if 1 // Modified
+GLFWAPI GLFWcursorposrelativefun glfwSetCursorPosRelativeCallback(GLFWwindow* handle,
+                                                          GLFWcursorposrelativefun cbfun)
+{
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    assert(window != NULL);
+
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+    _GLFW_SWAP_POINTERS(window->callbacks.cursorPosRelative, cbfun);
+    return cbfun;
+}
+#endif
 
 GLFWAPI GLFWcursorenterfun glfwSetCursorEnterCallback(GLFWwindow* handle,
                                                       GLFWcursorenterfun cbfun)

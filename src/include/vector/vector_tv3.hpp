@@ -79,6 +79,13 @@ T length (V3 v) {
 V3 normalize (V3 v) {
 	return v / V3(length(v));
 }
+V3 normalize_or_zero (V3 v) { // TODO: epsilon?
+	T len = length(v);
+	if (len != 0) {
+		 v /= len;
+	}
+	return v;
+}
 
 #if 1
 static constexpr V3 min (V3 l, V3 r) { return V3( min(l.x, r.x), min(l.y, r.y), min(l.z, r.z) ); }

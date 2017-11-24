@@ -23,28 +23,74 @@ typedef fm4		m4;
 #include "glad.c"
 #include "GLFW/glfw3.h"
 
-#include "platform_graphics.hpp"
+#include "platform.hpp"
+#include "gl.hpp"
 
-struct Vertex {
-	v3	pos;
-	v3	col;
+#define SIN_0	+0.0f
+#define SIN_120	+0.86602540378443864676372317075294f
+#define SIN_240	-0.86602540378443864676372317075294f
+#define COS_0	+1.0f
+#define COS_120	-0.5f
+#define COS_240	-0.54f
+
+static constexpr f32	tetrahedron_r = 1;
+static constexpr v3		tetrahedron_pos = v3(0,0,+1.0f/3);
+
+static Vertex			tetrahedron[4*3] = {
+	{ tetrahedron_r*v3(COS_0,	SIN_0,		-1.0f/3)	+tetrahedron_pos,	v3(1,0,0) },
+	{ tetrahedron_r*v3(COS_240,	SIN_240,	-1.0f/3)	+tetrahedron_pos,	v3(0,0,1) },
+	{ tetrahedron_r*v3(COS_120,	SIN_120,	-1.0f/3)	+tetrahedron_pos,	v3(0,1,0) },
+	
+	{ tetrahedron_r*v3(COS_0,	SIN_0,		-1.0f/3)	+tetrahedron_pos,	v3(1,0,0) },
+	{ tetrahedron_r*v3(COS_120,	SIN_120,	-1.0f/3)	+tetrahedron_pos,	v3(0,1,0) },
+	{ tetrahedron_r*v3(0,		0,			+1.0f)		+tetrahedron_pos,	v3(1,1,1) },
+	
+	{ tetrahedron_r*v3(COS_120,	SIN_120,	-1.0f/3)	+tetrahedron_pos,	v3(0,1,0) },
+	{ tetrahedron_r*v3(COS_240,	SIN_240,	-1.0f/3)	+tetrahedron_pos,	v3(0,0,1) },
+	{ tetrahedron_r*v3(0,		0,			+1.0f)		+tetrahedron_pos,	v3(1,1,1) },
+	
+	{ tetrahedron_r*v3(COS_240,	SIN_240,	-1.0f/3)	+tetrahedron_pos,	v3(0,0,1) },
+	{ tetrahedron_r*v3(COS_0,	SIN_0,		-1.0f/3)	+tetrahedron_pos,	v3(1,0,0) },
+	{ tetrahedron_r*v3(0,		0,			+1.0f)		+tetrahedron_pos,	v3(1,1,1) },
 };
 
-static Vertex tetrahedron[1*3] = {
-	{ rotate3_Z(deg(   0)) * v3(1,0,0), v3(1,0,0) },
-	{ rotate3_Z(deg(-120)) * v3(1,0,0), v3(0,1,0) },
-	{ rotate3_Z(deg(-240)) * v3(1,0,0), v3(0,0,1) },
-};
+static constexpr f32	floor_Z = 0;
+static constexpr f32	tile_dim = 1;
+static constexpr iv2	floor_r = iv2(16,16);
+
+static Vertex grid_floor[floor_r.y*2 * floor_r.x*2 * 6];
+
+static void gen_grid_floor () {
+	auto emit_quad = [] (Vertex* out, v3 pos, v3 col) {
+		out[0] = { pos +v3(+0.5f,-0.5f,0), col };
+		out[1] = { pos +v3(+0.5f,+0.5f,0), col };
+		out[2] = { pos +v3(-0.5f,-0.5f,0), col };
+		
+		out[3] = { pos +v3(-0.5f,-0.5f,0), col };
+		out[4] = { pos +v3(+0.5f,+0.5f,0), col };
+		out[5] = { pos +v3(-0.5f,+0.5f,0), col };
+	};
+	auto index = [] (s32 x, s32 y) -> Vertex* {
+		return grid_floor +(floor_r.x*2)*6*y +6*x;
+	};
+	
+	for (s32 y=0; y<(floor_r.y*2); ++y) {
+		for (s32 x=0; x<(floor_r.x*2); ++x) {
+			v3 col = BOOL_XOR(EVEN(x), EVEN(y)) ? srgb(224,226,228) : srgb(41,49,52);
+			emit_quad( index(x,y), v3(+0.5f,+0.5f,floor_Z) +v3((f32)(x -floor_r.x)*tile_dim, (f32)(y -floor_r.y)*tile_dim, 0), col );
+		}
+	}
+}
 
 static const char* shad_vert = R"_SHAD(
 	attribute	vec3	col;
-	attribute	vec3	pos;
+	attribute	vec3	pos_world;
 	varying		vec3	vs_col;
 	
-	uniform		mat4	MVP;
+	uniform		mat4	world_to_clip;
 	
 	void main() {
-		gl_Position = MVP * vec4(pos,1);
+		gl_Position = world_to_clip * vec4(pos_world,1);
 		vs_col = col;
 	}
 )_SHAD";
@@ -56,53 +102,68 @@ static const char* shad_frag = R"_SHAD(
 	}
 )_SHAD";
 
-static GLuint		vertex_buffer;
+static Vbo			vbo_shapes;
+static Vbo			vbo_floor;
+
 static GLuint		vertex_shader;
 static GLuint		fragment_shader;
 static GLuint		program;
 
-static GLint		mvp_location;
-static GLint		vpos_location;
-static GLint		vcol_location;
+static GLint		unif_world_to_clip;
 
 static void setup_gl () {
-	glGenBuffers(1, &vertex_buffer);
+	glEnable(GL_FRAMEBUFFER_SRGB);
 	
-	glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(tetrahedron), tetrahedron, GL_STATIC_DRAW);
+	glEnable(GL_DEPTH_TEST);
+	glClearDepth(1.0f);
+	glDepthFunc(GL_LEQUAL);
+	glDepthRange(0.0f, 1.0f);
+	glDepthMask(GL_TRUE);
 	
-	vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(vertex_shader, 1, &shad_vert, NULL);
-	glCompileShader(vertex_shader);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
+	glFrontFace(GL_CCW);
 	
-	fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragment_shader, 1, &shad_frag, NULL);
-	glCompileShader(fragment_shader);
+	vbo_shapes.gen();
+	vbo_floor.gen();
 	
-	program = glCreateProgram();
-	glAttachShader(program, vertex_shader);
-	glAttachShader(program, fragment_shader);
-	glLinkProgram(program);
+	gen_grid_floor();
 	
-	mvp_location = glGetUniformLocation(program, "MVP");
-	vpos_location = glGetAttribLocation(program, "pos");
-	vcol_location = glGetAttribLocation(program, "col");
+	vbo_shapes.upload(tetrahedron);
+	vbo_floor.upload(grid_floor);
 	
-	glEnableVertexAttribArray(vpos_location);
-	glVertexAttribPointer(vpos_location, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
-	
-	glEnableVertexAttribArray(vcol_location);
-	glVertexAttribPointer(vcol_location, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
-	
+	{
+		vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+		glShaderSource(vertex_shader, 1, &shad_vert, NULL);
+		glCompileShader(vertex_shader);
+		
+		fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+		glShaderSource(fragment_shader, 1, &shad_frag, NULL);
+		glCompileShader(fragment_shader);
+		
+		program = glCreateProgram();
+		glAttachShader(program, vertex_shader);
+		glAttachShader(program, fragment_shader);
+		glLinkProgram(program);
+		
+		unif_world_to_clip = glGetUniformLocation(program, "world_to_clip");
+	}
+
 }
 
 int main (int argc, char** argv) {
 	
-	setup_graphics_context();
+	platform_setup_context();
 	
 	set_vsync(1);
 	
 	setup_gl();
+	
+	f32 dt = 0;
+	f64 prev_t = glfwGetTime();
+	
+	v3 cam_pos_world =	v3(0, -5, 1);
+	v2 camera_ae =		v2(deg(0), deg(+80)); // azimuth elevation
 	
 	for (;;) {
 		
@@ -118,20 +179,47 @@ int main (int argc, char** argv) {
 			v2 tmp = (v2)wnd_dim;
 			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
 		}
+		v2 mouse_look_diff;
+		{
+			mouse_look_diff = inp.mouse_look_diff;
+			inp.mouse_look_diff = 0;
+		}
 		
+		//
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
+		
+		v4 clear_color = v4(srgb(41,49,52), 1);
+		glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 		
 		glUseProgram(program);
 		{
-			v3 cam_pos_world = v3(0,0, 5);
-			m4 world_to_cam = translate4(-cam_pos_world);
+			{
+				v2 mouse_look_sens = v2(deg(1.0f / 10));
+				camera_ae -= mouse_look_diff * mouse_look_sens;
+				camera_ae.x = mymod(camera_ae.x, deg(360));
+				camera_ae.y = clamp(camera_ae.y, deg(2), deg(180.0f -2));
+				
+				//printf(">>> %f %f\n", to_deg(camera_ae.x), to_deg(camera_ae.y));
+			}
+			m3 world_to_cam_rot = rotate3_X(-camera_ae.y) * rotate3_Z(-camera_ae.x);
+			m3 cam_to_world_rot = rotate3_Z(camera_ae.x) * rotate3_X(camera_ae.y);
+			
+			{
+				f32 cam_vel = 6;
+				
+				v3 cam_vel_cam = normalize_or_zero( (v3)inp.cam_dir ) * cam_vel;
+				cam_pos_world += (cam_to_world_rot * cam_vel_cam) * dt;
+				
+				//printf(">>> %f %f %f\n", cam_vel_cam.x, cam_vel_cam.y, cam_vel_cam.z);
+			}
+			m4 world_to_cam = world_to_cam_rot * translate4(-cam_pos_world);
 			
 			m4 cam_to_clip;
 			{
 				f32 vfov =			deg(70);
-				f32 clip_near =		deg(1.0f/16);
-				f32 clip_far =		deg(512);
+				f32 clip_near =		1.0f/16;
+				f32 clip_far =		512;
 				
 				v2 frust_scale;
 				frust_scale.y = tan(vfov / 2);
@@ -153,12 +241,21 @@ int main (int argc, char** argv) {
 			
 			m4 world_to_clip = cam_to_clip * world_to_cam;
 			
-			glUniformMatrix4fv(mvp_location, 1, GL_FALSE, &world_to_clip.arr[0][0]);
+			glUniformMatrix4fv(unif_world_to_clip, 1, GL_FALSE, &world_to_clip.arr[0][0]);
 		}
+		vbo_shapes.bind(program);
 		glDrawArrays(GL_TRIANGLES, 0, ARRLEN(tetrahedron));
+		
+		vbo_floor.bind(program);
+		glDrawArrays(GL_TRIANGLES, 0, ARRLEN(grid_floor));
 		
 		glfwSwapBuffers(wnd);
 		
+		{
+			f64 now = glfwGetTime();
+			dt = now -prev_t;
+			prev_t = now;
+		}
 	}
 	
 	glfwDestroyWindow(wnd);

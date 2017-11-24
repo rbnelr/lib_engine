@@ -845,7 +845,60 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
             DragFinish(drop);
             return 0;
         }
-    }
+		
+#if 1 // Modified
+		case WM_INPUT:
+        {
+            UINT size;
+            HRAWINPUT ri = (HRAWINPUT) lParam;
+            RAWINPUT* data;
+            int dx, dy;
+
+            // Only process input when disabled cursor mode is applied
+            if (_glfw.win32.disabledCursorWindow != window)
+                break;
+
+            GetRawInputData(ri, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER));
+            if (size > (UINT) _glfw.win32.rawInputSize)
+            {
+                free(_glfw.win32.rawInput);
+                _glfw.win32.rawInput = calloc(size, 1);
+                _glfw.win32.rawInputSize = size;
+            }
+
+            size = _glfw.win32.rawInputSize;
+            if (GetRawInputData(ri, RID_INPUT,
+                                _glfw.win32.rawInput, &size,
+                                sizeof(RAWINPUTHEADER)) == (UINT) -1)
+            {
+                _glfwInputError(GLFW_PLATFORM_ERROR,
+                                "Win32: Failed to retrieve raw input data");
+                break;
+            }
+
+            data = _glfw.win32.rawInput;
+            if (data->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)
+            {
+                dx = data->data.mouse.lLastX - window->win32.lastCursorPosX;
+                dy = data->data.mouse.lLastY - window->win32.lastCursorPosY;
+				
+                _glfwInputError(GLFW_PLATFORM_ERROR,
+                                "Win32: Recieved absolute coord");
+            }
+            else
+            {
+                dx = data->data.mouse.lLastX;
+                dy = data->data.mouse.lLastY;
+            }
+
+            _glfwInputCursorPosRelative(window, dx, dy);
+
+            window->win32.lastCursorPosX += dx;
+            window->win32.lastCursorPosY += dy;
+            break;
+		}
+#endif
+	}
 
     return DefWindowProcW(hWnd, uMsg, wParam, lParam);
 }
@@ -1463,6 +1516,7 @@ void _glfwPlatformSetCursorPos(_GLFWwindow* window, double xpos, double ypos)
     SetCursorPos(pos.x, pos.y);
 }
 
+#if 0
 void _glfwPlatformSetCursorMode(_GLFWwindow* window, int mode)
 {
     if (mode == GLFW_CURSOR_DISABLED)
@@ -1486,6 +1540,47 @@ void _glfwPlatformSetCursorMode(_GLFWwindow* window, int mode)
     if (cursorInClientArea(window))
         updateCursorImage(window);
 }
+#else // Modified
+void _glfwPlatformSetCursorMode(_GLFWwindow* window, int mode)
+{
+    if (mode == GLFW_CURSOR_DISABLED)
+    {
+        const RAWINPUTDEVICE rid = { 0x01, 0x02, 0, window->win32.handle };
+
+        _glfw.win32.disabledCursorWindow = window;
+        _glfwPlatformGetCursorPos(window,
+                                  &_glfw.win32.restoreCursorPosX,
+                                  &_glfw.win32.restoreCursorPosY);
+        centerCursor(window);
+        updateClipRect(window);
+
+        if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
+        {
+            _glfwInputError(GLFW_PLATFORM_ERROR,
+                                 "Win32: Failed to register raw input device");
+        }
+    }
+    else if (_glfw.win32.disabledCursorWindow == window)
+    {
+        const RAWINPUTDEVICE rid = { 0x01, 0x02, RIDEV_REMOVE, NULL };
+
+        _glfw.win32.disabledCursorWindow = NULL;
+        updateClipRect(NULL);
+        _glfwPlatformSetCursorPos(window,
+                                  _glfw.win32.restoreCursorPosX,
+                                  _glfw.win32.restoreCursorPosY);
+
+        if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
+        {
+            _glfwInputError(GLFW_PLATFORM_ERROR,
+                                 "Win32: Failed to remove raw input device");
+        }
+    }
+
+    if (cursorInClientArea(window))
+        updateCursorImage(window);
+}
+#endif
 
 const char* _glfwPlatformGetKeyName(int key, int scancode)
 {

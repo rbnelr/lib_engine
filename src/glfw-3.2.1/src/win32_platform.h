@@ -255,6 +255,11 @@ typedef struct _GLFWlibraryWin32
     double              restoreCursorPosX, restoreCursorPosY;
     // The window whose disabled cursor mode is active
     _GLFWwindow*        disabledCursorWindow;
+	
+#if 1 // Modified
+    RAWINPUT*           rawInput;
+	int					rawInputSize;
+#endif
 
     struct {
         HINSTANCE       instance;

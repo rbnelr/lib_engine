@@ -978,6 +978,10 @@ typedef void (* GLFWmousebuttonfun)(GLFWwindow*,int,int,int);
  */
 typedef void (* GLFWcursorposfun)(GLFWwindow*,double,double);
 
+#if 1 // Modified
+typedef void (* GLFWcursorposrelativefun)(GLFWwindow*,double,double);
+#endif
+
 /*! @brief The function signature for cursor enter/leave callbacks.
  *
  *  This is the function signature for cursor enter/leave callback functions.
@@ -3431,6 +3435,10 @@ GLFWAPI GLFWmousebuttonfun glfwSetMouseButtonCallback(GLFWwindow* window, GLFWmo
  *  @ingroup input
  */
 GLFWAPI GLFWcursorposfun glfwSetCursorPosCallback(GLFWwindow* window, GLFWcursorposfun cbfun);
+
+#if 1 // Modified
+GLFWAPI GLFWcursorposrelativefun glfwSetCursorPosRelativeCallback(GLFWwindow* window, GLFWcursorposrelativefun cbfun);
+#endif
 
 /*! @brief Sets the cursor enter/exit callback.
  *

@@ -114,7 +114,7 @@ public:
 									T e, T f, T g,
 									T i, T j, T k ) {			return M3{V3(a,e,i),V3(b,f,j),V3(c,g,k)}; }
 	static constexpr M3 ident () {								return row(1,0,0, 0,1,0, 0,0,1); }
-	explicit constexpr M3 (M2 m): arr{V3(m.arr[0], 0), V3(m.arr[1], 0), V3(0,0,1)} {}
+	constexpr M3 (M2 m): arr{V3(m.arr[0], 0), V3(m.arr[1], 0), V3(0,0,1)} {}
 	
 	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
 	
@@ -135,7 +135,8 @@ public:
 									T i, T j, T k, T l,
 									T m, T n, T o, T p ) {		return M4{V4(a,e,i,m),V4(b,f,j,n),V4(c,g,k,o),V4(d,h,l,p)}; }
 	static constexpr M4 ident () {								return row(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1); }
-	explicit constexpr M4 (M3 m): arr{V4(m.arr[0], 0), V4(m.arr[1], 0), V4(m.arr[2], 0), V4(0,0,0,1)} {}
+	constexpr M4 (M2 m): arr{V4(m.arr[0], 0,0), V4(m.arr[1], 0,0), V4(0,0,1,0), V4(0,0,0,1)} {}
+	constexpr M4 (M3 m): arr{V4(m.arr[0], 0), V4(m.arr[1], 0), V4(m.arr[2], 0), V4(0,0,0,1)} {}
 	
 	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
 	M3 m3 () const {											return M3::column( arr[0].xyz(), arr[1].xyz(), arr[2].xyz() ); }

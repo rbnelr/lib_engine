@@ -381,6 +381,9 @@ struct _GLFWwindow
         GLFWframebuffersizefun  fbsize;
         GLFWmousebuttonfun      mouseButton;
         GLFWcursorposfun        cursorPos;
+#if 1 // Modified
+        GLFWcursorposrelativefun cursorPosRelative;
+#endif
         GLFWcursorenterfun      cursorEnter;
         GLFWscrollfun           scroll;
         GLFWkeyfun              key;

@@ -81,6 +81,13 @@ union V2 {
 	V2 normalize (V2 v) {
 		return v / V2(length(v));
 	}
+	V2 normalize_or_zero (V2 v) { // TODO: epsilon?
+		T len = length(v);
+		if (len != 0) {
+			 v /= len;
+		}
+		return v;
+	}
 	
 	#if 1
 	static constexpr V2 min (V2 l, V2 r) { return V2( min(l.x, r.x), min(l.y, r.y) ); }
