@@ -149,7 +149,7 @@ int main (int argc, char** argv) {
 		//
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
-		v4 clear_color = v4(srgb(41,49,52), 1);
+		v4 clear_color = v4(srgb(41,49,52)*3, 1);
 		glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 		

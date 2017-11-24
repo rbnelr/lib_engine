@@ -108,15 +108,26 @@ static void toggle_fullscreen () {
 	position_window();
 }
 
+#define GL_VER_MAJOR 3
+#define GL_VER_MINOR 3
+
+#define GL_VAOS_REQUIRED	GL_VER_MAJOR >= 3 && GL_VER_MINOR >= 2
+
+#if GL_VAOS_REQUIRED
+GLuint	g_vao;
+#endif
+
 static void platform_setup_context_and_open_window () {
 	
 	glfwSetErrorCallback(glfw_error_proc);
 	
 	dbg_assert( glfwInit() );
 	
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,	3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,	1);
-	//glfwWindowHint(GLFW_OPENGL_PROFILE,			GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,	GL_VER_MAJOR);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,	GL_VER_MINOR);
+	if (GL_VER_MAJOR >= 3 && GL_VER_MINOR >= 2) {
+		glfwWindowHint(GLFW_OPENGL_PROFILE,		GLFW_OPENGL_CORE_PROFILE);
+	}
 	
 	{ // open and postion window
 		primary_monitor = glfwGetPrimaryMonitor();
@@ -150,6 +161,11 @@ static void platform_setup_context_and_open_window () {
 	
 	glfwMakeContextCurrent(wnd);
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+	
+	if (GL_VAOS_REQUIRED) {
+		glGenVertexArrays(1, &g_vao);
+		glBindVertexArray(g_vao);
+	}
 	
 }
 static void platform_terminate () {

@@ -9,6 +9,10 @@ DONE:
 #2017.11.24 dr. tag
  implement shader loading
  
+ saving window positioning
+ 
+ global VAO if VAO required
+ 
 TODO
 -FEATURES:
  
