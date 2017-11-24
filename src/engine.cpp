@@ -82,34 +82,10 @@ static void gen_grid_floor () {
 	}
 }
 
-static const char* shad_vert = R"_SHAD(
-	attribute	vec3	col;
-	attribute	vec3	pos_world;
-	varying		vec3	vs_col;
-	
-	uniform		mat4	world_to_clip;
-	
-	void main() {
-		gl_Position = world_to_clip * vec4(pos_world,1);
-		vs_col = col;
-	}
-)_SHAD";
-static const char* shad_frag = R"_SHAD(
-	varying		vec3	vs_col;
-	
-	void main() {
-		gl_FragColor = vec4(vs_col, 1.0);
-	}
-)_SHAD";
-
 static Vbo			vbo_shapes;
 static Vbo			vbo_floor;
 
-static GLuint		vertex_shader;
-static GLuint		fragment_shader;
-static GLuint		program;
-
-static GLint		unif_world_to_clip;
+static Shader		shad;
 
 static void setup_gl () {
 	glEnable(GL_FRAMEBUFFER_SRGB);
@@ -132,23 +108,8 @@ static void setup_gl () {
 	vbo_shapes.upload(tetrahedron);
 	vbo_floor.upload(grid_floor);
 	
-	{
-		vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vertex_shader, 1, &shad_vert, NULL);
-		glCompileShader(vertex_shader);
-		
-		fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(fragment_shader, 1, &shad_frag, NULL);
-		glCompileShader(fragment_shader);
-		
-		program = glCreateProgram();
-		glAttachShader(program, vertex_shader);
-		glAttachShader(program, fragment_shader);
-		glLinkProgram(program);
-		
-		unif_world_to_clip = glGetUniformLocation(program, "world_to_clip");
-	}
-
+	shad.load();
+	
 }
 
 int main (int argc, char** argv) {
@@ -192,7 +153,7 @@ int main (int argc, char** argv) {
 		glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 		
-		glUseProgram(program);
+		shad.bind();
 		{
 			{
 				v2 mouse_look_sens = v2(deg(1.0f / 10));
@@ -241,12 +202,12 @@ int main (int argc, char** argv) {
 			
 			m4 world_to_clip = cam_to_clip * world_to_cam;
 			
-			glUniformMatrix4fv(unif_world_to_clip, 1, GL_FALSE, &world_to_clip.arr[0][0]);
+			shad.world_to_clip.set(world_to_clip);
 		}
-		vbo_shapes.bind(program);
+		vbo_shapes.bind(shad);
 		glDrawArrays(GL_TRIANGLES, 0, ARRLEN(tetrahedron));
 		
-		vbo_floor.bind(program);
+		vbo_floor.bind(shad);
 		glDrawArrays(GL_TRIANGLES, 0, ARRLEN(grid_floor));
 		
 		glfwSwapBuffers(wnd);

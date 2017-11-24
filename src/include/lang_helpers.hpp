@@ -83,7 +83,7 @@
 #include "types.hpp"
 
 #define ANSI_COLOUR_CODE_RED	"\033[1;31m"
-#define ANSI_COLOUR_CODE_YELLOW	"\033[0;33m"
+#define ANSI_COLOUR_CODE_YELLOW	"\033[1;33m"
 #define ANSI_COLOUR_CODE_NC		"\033[0m"
 
 #include <cstdarg>
@@ -171,6 +171,7 @@ static T* lsearch (std::vector<T>& arr, FUNC comp_with) {
 	return nullptr; // not found
 }
 
+// Printf that outputs to a std::string
 static void _prints (std::string* s, cstr format, va_list vl) { // print 
 	for (;;) {
 		auto ret = vsnprintf(&(*s)[0], s->length()+1, format, vl); // i think i'm technically not allowed to overwrite the null terminator
@@ -202,4 +203,45 @@ static std::string prints (cstr format, ...) {
 	va_end(vl);
 	
 	return ret;
+}
+
+// array reference that can be constructed from all possible arrays to allow functions that read arrays to take one type
+template <typename T>
+struct array {
+	T*		arr;
+	uptr	len;
+	
+	template <uptr N>
+	array (T const (& arr)[N]): arr{arr}, len{N} {}
+	array (std::vector<T> cr vec): arr{vec.begin()}, len{vec.size()} {}
+	
+	uptr bytes_size () const { return len * sizeof(T); }
+	
+	T const&	operator[] (uptr indx) const {
+		dbg_assert(indx < len, "Index overflow in array");
+		return arr[indx];
+	}
+	T&			operator[] (uptr indx) {
+		dbg_assert(indx < len, "Index overflow in array");
+		return arr[indx];
+	}
+};
+
+//
+static bool load_text_file (cstr filename, std::string* out) {
+	FILE* f = fopen(filename, "rb"); // read binary because i don't want to convert "\r\n" to "\n"
+	if (!f) return false; // fail
+	
+	defer { fclose(f); };
+	
+	fseek(f, 0, SEEK_END);
+	u64 file_size = ftell(f); // only 32 support for now
+	rewind(f);
+	
+	out->resize(file_size);
+	
+	auto ret = fread(&(*out)[0], 1,file_size, f);
+	dbg_assert(ret == file_size);
+	
+	return true;
 }
