@@ -8,6 +8,9 @@ static struct Input {
 static GLFWwindow*	wnd;
 static void toggle_fullscreen ();
 
+static void glfw_key_event (GLFWwindow* window, int key, int scancode, int action, int mods);
+static void glfw_mouse_button_event (GLFWwindow* window, int button, int action, int mods);
+
 static void start_mouse_look () {
 	glfwSetInputMode(wnd, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 }
@@ -20,53 +23,14 @@ static void glfw_cursor_move_relative (GLFWwindow* window, double dx, double dy)
 	v2 diff = v2((f32)dx,(f32)dy);
 	inp.mouse_look_diff += diff;
 }
-static void glfw_key_event (GLFWwindow* window, int key, int scancode, int action, int mods) {
-	dbg_assert(action == GLFW_PRESS || action == GLFW_RELEASE || action == GLFW_REPEAT);
-	
-	bool went_down = action == GLFW_PRESS;
-	bool went_up = action == GLFW_RELEASE;
-	
-	bool repeated = !went_down && !went_up; // GLFW_REPEAT
-	
-	bool alt = (mods & GLFW_MOD_ALT) != 0;
-	
-	if (repeated) {
-		
-	} else {
-		switch (key) {
-			
-			case GLFW_KEY_F11:			if (went_down) {		toggle_fullscreen(); }	break;
-			case GLFW_KEY_ENTER:		if (went_down && alt) {	toggle_fullscreen(); }	break;
-			
-			case GLFW_KEY_A:			inp.cam_dir.x -= went_down ? +1 : -1;		break;
-			case GLFW_KEY_D:			inp.cam_dir.x += went_down ? +1 : -1;		break;
-			
-			case GLFW_KEY_S:			inp.cam_dir.z += went_down ? +1 : -1;		break;
-			case GLFW_KEY_W:			inp.cam_dir.z -= went_down ? +1 : -1;		break;
-			
-			case GLFW_KEY_LEFT_CONTROL:	inp.cam_dir.y -= went_down ? +1 : -1;		break;
-			case GLFW_KEY_SPACE:		inp.cam_dir.y += went_down ? +1 : -1;		break;
-			
-		}
-	}
-}
-static void glfw_mouse_button_event (GLFWwindow* window, int button, int action, int mods) {
-    switch (button) {
-		case GLFW_MOUSE_BUTTON_RIGHT:
-			if (action == GLFW_PRESS) {
-				start_mouse_look();
-			} else {
-				stop_mouse_look();
-			}
-			break;
-	}
-}
 
 static void glfw_error_proc(int err, const char* msg) {
 	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
 }
 
+int vsync_mode = 1;
 static void set_vsync (int mode) {
+	vsync_mode = mode;
 	glfwSwapInterval(mode);
 }
 
@@ -106,6 +70,8 @@ static void toggle_fullscreen () {
 	fullscreen = !fullscreen;
 	
 	position_window();
+	
+	set_vsync(vsync_mode);
 }
 
 #define GL_VER_MAJOR 3
@@ -117,7 +83,7 @@ static void toggle_fullscreen () {
 GLuint	g_vao;
 #endif
 
-static void platform_setup_context_and_open_window () {
+static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 default_wnd_dim) {
 	
 	glfwSetErrorCallback(glfw_error_proc);
 	
@@ -134,16 +100,15 @@ static void platform_setup_context_and_open_window () {
 		
 		bool pos_restored = read_entire_file(WINDOW_POSITIONING_FILE, &window_positioning, sizeof(window_positioning));
 		if (!pos_restored) {
-			window_positioning.dim = iv2(1280, 720);
+			window_positioning.dim = default_wnd_dim;
 		}
 		
 		glfwWindowHint(GLFW_VISIBLE, 0);
 		
-		wnd = glfwCreateWindow(window_positioning.dim.x,window_positioning.dim.y, "GLFW test", NULL, NULL);
+		wnd = glfwCreateWindow(window_positioning.dim.x,window_positioning.dim.y, inital_wnd_title, NULL, NULL);
 		dbg_assert(wnd);
 		
 		if (pos_restored) {
-			// window_positioning restored
 			printf("window_positioning restored from \"" WINDOW_POSITIONING_FILE "\".\n");
 		} else {
 			get_window_positioning();

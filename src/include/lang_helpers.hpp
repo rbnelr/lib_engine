@@ -241,7 +241,7 @@ static bool read_text_file (cstr filename, std::string* out) {
 	return true;
 }
 
-static bool overwrite_file (cstr filename, void* buf, u64 write_size) {
+static bool overwrite_file (cstr filename, void const* buf, u64 write_size) {
 	FILE* f = fopen(filename, "wb"); // write binary (overwrite file if exists / create if not exists)
 	if (!f) return false; // fail
 	

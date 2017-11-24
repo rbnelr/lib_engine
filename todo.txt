@@ -13,6 +13,8 @@ DONE:
  
  global VAO if VAO required
  
+ added more shapes
+ 
 TODO
 -FEATURES:
  
@@ -24,4 +26,6 @@ TODO
  -write a nice looking skybox generator shader (try to look like a sky)
  
 -BUGS:
+ stuck wasd/space/ctrl movement sometimes
+ -find reproducible case and log events i recieve
  

@@ -161,6 +161,31 @@ struct Shader : public Base_Shader {
 };
 
 
+template <typename VT> // VT: vertex type
+struct Vbo_Data {
+	std::vector<VT>	_data;
+	
+	void clear () {
+		_data.clear();
+	}
+	VT* append (uptr n=1) {
+		uptr old_len = _data.size();
+		_data.resize( old_len +n );
+		return _data.data() +old_len;
+	}
+	
+	VT const* data () const {
+		return _data.data();
+	}
+	uptr length () const {
+		return _data.size();
+	}
+	uptr get_size_bytes () const  {
+		return length() * sizeof(VT);
+	}
+	
+};
+
 struct Vertex {
 	v3	pos_world;
 	v3	col;
@@ -173,9 +198,9 @@ struct Vbo {
 		glGenBuffers(1, &gl_vbo);
 	}
 	
-	void upload (Vertex const* data, u64 data_size) {
+	void upload (Vbo_Data<Vertex> cr data) {
 		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-		glBufferData(GL_ARRAY_BUFFER, data_size, data, GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, data.get_size_bytes(), data.data(), GL_STATIC_DRAW);
 	}
 	
 	void bind (Base_Shader shad) {
