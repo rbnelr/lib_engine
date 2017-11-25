@@ -163,17 +163,17 @@ static void gen_iso_shphere (f32 r, u32 wfaces, u32 hfaces, v3 pos_world) {
 	auto* out = shapes_mesh.append((hfaces-2)*wfaces*6 +2*wfaces*3);
 	
 	auto quad = [&] (v3 a, v3 b, v3 c, v3 d) {
-		*out++ = { b +pos_world, b/2+0.5f };
-		*out++ = { c +pos_world, c/2+0.5f };
-		*out++ = { a +pos_world, a/2+0.5f };
-		*out++ = { a +pos_world, a/2+0.5f };
-		*out++ = { c +pos_world, c/2+0.5f };
-		*out++ = { d +pos_world, d/2+0.5f };
+		*out++ = { r*b +pos_world, b/2+0.5f };
+		*out++ = { r*c +pos_world, c/2+0.5f };
+		*out++ = { r*a +pos_world, a/2+0.5f };
+		*out++ = { r*a +pos_world, a/2+0.5f };
+		*out++ = { r*c +pos_world, c/2+0.5f };
+		*out++ = { r*d +pos_world, d/2+0.5f };
 	};
 	auto tri = [&] (v3 a, v3 b, v3 c) {
-		*out++ = { a +pos_world, a/2+0.5f };
-		*out++ = { b +pos_world, b/2+0.5f };
-		*out++ = { c +pos_world, c/2+0.5f };
+		*out++ = { r*a +pos_world, a/2+0.5f };
+		*out++ = { r*b +pos_world, b/2+0.5f };
+		*out++ = { r*c +pos_world, c/2+0.5f };
 	};
 	
 	for (u32 j=0; j<hfaces; ++j) {
@@ -225,17 +225,14 @@ static void gen_grid_floor () {
 	grid_floor.clear();
 	auto* out = grid_floor.append(floor_r.y*2 * floor_r.x*2 * 6);
 	
-	u32 i = 0;
 	auto emit_quad = [&] (v3 pos, v3 col) {
-		*out++ = { pos +v3(+0.5f,-0.5f,0), i == 3 ? v3(1,0,0) : col };
+		*out++ = { pos +v3(+0.5f,-0.5f,0), col };
 		*out++ = { pos +v3(+0.5f,+0.5f,0), col };
 		*out++ = { pos +v3(-0.5f,-0.5f,0), col };
 		
 		*out++ = { pos +v3(-0.5f,-0.5f,0), col };
 		*out++ = { pos +v3(+0.5f,+0.5f,0), col };
 		*out++ = { pos +v3(-0.5f,+0.5f,0), col };
-		
-		++i;
 	};
 	
 	for (s32 y=0; y<(floor_r.y*2); ++y) {
@@ -253,26 +250,6 @@ static Vbo			vbo_floor;
 
 static Shader		shad;
 
-static void setup_gl () {
-	glEnable(GL_FRAMEBUFFER_SRGB);
-	
-	glEnable(GL_DEPTH_TEST);
-	glClearDepth(1.0f);
-	glDepthFunc(GL_LEQUAL);
-	glDepthRange(0.0f, 1.0f);
-	glDepthMask(GL_TRUE);
-	
-	glEnable(GL_CULL_FACE);
-	glCullFace(GL_BACK);
-	glFrontFace(GL_CCW);
-	
-	vbo_shapes.gen();
-	vbo_floor.gen();
-	
-	shad.load();
-	
-}
-
 //
 static f32			dt = 0;
 
@@ -288,7 +265,7 @@ static Camera		cam;
 
 #define SAVE_FILE	"saves/camera_view.bin"
 
-static void load () {
+static void load_game () {
 	bool loaded = read_entire_file(SAVE_FILE, &cam, sizeof(cam));
 	if (loaded) {
 		printf("camera_view loaded from \"" SAVE_FILE "\".\n");
@@ -297,7 +274,7 @@ static void load () {
 		printf("camera_view could not be loaded from \"" SAVE_FILE "\", using defaults.\n");
 	}
 }
-static void save () {
+static void save_game () {
 	bool saved = overwrite_file(SAVE_FILE, &cam, sizeof(cam));
 	if (saved) {
 		printf("camera_view saved to \"" SAVE_FILE "\".\n");
@@ -339,8 +316,8 @@ static void glfw_key_event (GLFWwindow* window, int key, int scancode, int actio
 				case GLFW_KEY_ENTER:		if (alt && went_down) {	toggle_fullscreen(); }	break;
 				
 				//
-				case GLFW_KEY_S:			if (alt && went_down) {	save(); }			break;
-				case GLFW_KEY_L:			if (alt && went_down) {	load(); }			break;
+				case GLFW_KEY_S:			if (alt && went_down) {	save_game(); }			break;
+				case GLFW_KEY_L:			if (alt && went_down) {	load_game(); }			break;
 			}
 		}
 	}
@@ -363,15 +340,37 @@ int main (int argc, char** argv) {
 	
 	platform_setup_context_and_open_window(app_name, iv2(1280, 720));
 	
+	//
+	load_game();
+	
+	//
 	set_vsync(1);
 	
-	setup_gl();
+	{ // GL state
+		glEnable(GL_FRAMEBUFFER_SRGB);
+		
+		glEnable(GL_DEPTH_TEST);
+		glClearDepth(1.0f);
+		glDepthFunc(GL_LEQUAL);
+		glDepthRange(0.0f, 1.0f);
+		glDepthMask(GL_TRUE);
+		
+		glEnable(GL_CULL_FACE);
+		glCullFace(GL_BACK);
+		glFrontFace(GL_CCW);
+	}
 	
+	vbo_shapes.gen();
+	vbo_floor.gen();
+	
+	shad.load();
+	
+	//load_mesh("");
+	
+	// 
 	f64 prev_t = glfwGetTime();
 	f32 avg_dt = 1.0f / 60;
 	f32 abg_dt_alpha = 0.025f;
-	
-	load();
 	
 	for (u32 frame_i=0;; ++frame_i) {
 		

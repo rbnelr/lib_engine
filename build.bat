@@ -14,7 +14,7 @@
 	set GLAD=!DEPS!glad/
 	set STB=!DEPS!stb/
 	
-	set GLFW_SRC=!SRC!glfw-3.3/
+	set GLFW_SRC=!DEPS!glfw-3.3/
 	
 	rem can do standart compile all link all build with these
 	set GLFW_SOURCES=-D_GLFW_WIN32=1 ^
