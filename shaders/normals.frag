@@ -8,5 +8,5 @@ in		vec3	vs_col;
 out		vec3	frag_col;
 
 void main () {
-	frag_col = vs_col;
+	frag_col = vs_norm_world / 2 +0.5;
 }

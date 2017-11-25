@@ -155,9 +155,9 @@ rem /llvm
 	rem !LLVM!clang++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLFW!include !SRC!!proj!.cpp -E > out.cpp
 	
 	rem glfw static link
-	!GCC!gcc -m64 !opt! !warn! -I!SRC!glfw-3.2.1/include -I!SRC!glfw-3.2.1/src -c !GLFW_ONE_SRC_FILE!
+	!LLVM!clang -m64 !opt! !warn! -Wno-deprecated-declarations -I!GLFW_SRC!include -I!GLFW_SRC!src -c !GLFW_ONE_SRC_FILE!
 	
-	!GCC!g++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLAD! -I!STB! -I!SRC!glfw-3.2.1/include -o !ROOT!!proj!.exe !SRC!!proj!.cpp glfw_one_source_file.o -lKERNEL32 -lUSER32 -lGDI32 -lOPENGL32 -lSHELL32
+	!LLVM!clang++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLAD! -I!STB! -I!GLFW_SRC!include -o !ROOT!!proj!.exe !SRC!!proj!.cpp glfw_one_source_file.o -lKERNEL32 -lUSER32 -lGDI32 -lOPENGL32 -lSHELL32
 	
 	del *.o
 	

@@ -130,7 +130,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 	struct Vert_Indecies {
 		u32		pos;
 		u32		uv;
-		u32		nrm;
+		u32		norm;
 	};
 	struct Triangle {
 		Vert_Indecies arr[3];
@@ -138,12 +138,12 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 	
 	std::vector<v3> poss;
 	std::vector<v2> uvs;
-	std::vector<v3> nrms;
+	std::vector<v3> norms;
 	std::vector<Triangle> tris;
 	
 	poss.reserve(4*1024);
 	uvs.reserve(4*1024);
-	nrms.reserve(4*1024);
+	norms.reserve(4*1024);
 	tris.reserve(4*1024);
 	
 	{ // load data from 
@@ -227,11 +227,11 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 					
 					if (*cur++ != '/') goto error;
 					
-					bool nrm = int_(&cur, &vert[i].nrm);
-					if (nrm && vert[i].nrm == 0) goto error; // out of range index
+					bool norm = int_(&cur, &vert[i].norm);
+					if (norm && vert[i].norm == 0) goto error; // out of range index
 				} else {
 					vert[i].uv = 0;
-					vert[i].nrm = 0;
+					vert[i].norm = 0;
 				}
 				
 				++i;
@@ -240,16 +240,16 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 			}
 			
 			if (i == 3) {
-				tris.push_back({	vert[0],
+				tris.push_back({{	vert[0],
 									vert[1],
-									vert[2] });
+									vert[2] }});
 			} else /* i == 4 */ {
-				tris.push_back({	vert[1],
+				tris.push_back({{	vert[1],
 									vert[2],
-									vert[0] });
-				tris.push_back({	vert[0],
+									vert[0] }});
+				tris.push_back({{	vert[0],
 									vert[2],
-									vert[3] });
+									vert[3] }});
 			}
 			
 			return;
@@ -275,7 +275,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 					uvs.push_back( parse_vec2() );
 				}
 				else if (	comp(tok, "vn") ) {
-					nrms.push_back( parse_vec3() );
+					norms.push_back( parse_vec3() );
 				}
 				else if (	comp(tok, "f") ) {
 					face();
@@ -310,7 +310,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 	vbo->vertecies.clear();
 	vbo->indices.clear();
 	
-	{ // expand triangles from individually indexed poss/uvs/nrms to non-indexed
+	{ // expand triangles from individually indexed poss/uvs/norms to non-indexed
 		vbo->vertecies.reserve( tris.size() * 3 ); // max possible size
 		vbo->indices.reserve( tris.size() * 3 );
 		
@@ -321,8 +321,8 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 				Mesh_Vertex v;
 				
 				v.pos =		poss[t.arr[i].pos -1] +pos_offs;
-				v.norm =	t.arr[i].nrm ?	nrms[t.arr[i].nrm -1]	: MESH_DEFAULT_NORM;
-				v.uv =		t.arr[i].uv ?	uvs[t.arr[i].uv -1]		: MESH_DEFAULT_UV;
+				v.norm =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: MESH_DEFAULT_NORM;
+				v.uv =		t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: MESH_DEFAULT_UV;
 				v.col =		MESH_DEFAULT_COL;
 				
 				auto entry = unique.find(v);

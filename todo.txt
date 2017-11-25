@@ -15,6 +15,9 @@ DONE:
  
  added more shapes
  
+ implement shader loading
+ -> auto reload on file change with GetFileTime() polling per file
+ 
 TODO
 -FEATURES:
  

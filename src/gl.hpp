@@ -84,8 +84,11 @@ static GLuint load_shader (GLenum type, cstr filepath) {
 	
 	return shad;
 }
-static GLuint link_program (GLuint vert, GLuint frag, cstr vert_filepath, cstr frag_filepath) {
+static GLuint load_program (cstr vert_filepath, cstr frag_filepath) {
 	GLuint prog = glCreateProgram();
+	
+	GLuint vert = load_shader(GL_VERTEX_SHADER, vert_filepath);
+	GLuint frag = load_shader(GL_FRAGMENT_SHADER, frag_filepath);
 	
 	glAttachShader(prog, vert);
 	glAttachShader(prog, frag);
@@ -113,31 +116,104 @@ static GLuint link_program (GLuint vert, GLuint frag, cstr vert_filepath, cstr f
 	glDetachShader(prog, vert);
 	glDetachShader(prog, frag);
 	
+	glDeleteShader(vert);
+	glDeleteShader(frag);
+	
 	return prog;
+}
+static void unload_program (GLuint prog) {
+	glDeleteProgram(prog);
 }
 
 struct Base_Shader {
-	GLuint			gl_prog;
+	GLuint		gl_prog;
 	
-	void load (cstr vert_name, cstr frag_name) {
-		
+	cstr		vert_name;
+	cstr		frag_name;
+	
+	#if RZ_DBG
+	HANDLE		_vert_h;
+	HANDLE		_frag_h;
+	
+	FILETIME	_vert_t;
+	FILETIME	_frag_t;
+	#endif
+	
+	Base_Shader (cstr v, cstr f): gl_prog{0}, vert_name{v}, frag_name{f} {}
+	
+	void init () {
+		#if RZ_DBG
 		std::string vert_filepath = prints("shaders/%s", vert_name);
 		std::string frag_filepath = prints("shaders/%s", frag_name);
 		
-		GLuint vert = load_shader(GL_VERTEX_SHADER, vert_filepath.c_str());
-		GLuint frag = load_shader(GL_FRAGMENT_SHADER, frag_filepath.c_str());
+		{
+			_vert_h = CreateFile(vert_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			dbg_assert(_vert_h != INVALID_HANDLE_VALUE);
+			GetFileTime(_vert_h, NULL, NULL, &_vert_t);
+		}
+		{
+			_frag_h = CreateFile(frag_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			dbg_assert(_frag_h != INVALID_HANDLE_VALUE);
+			GetFileTime(_frag_h, NULL, NULL, &_frag_t);
+		}
+		#endif
+	}
+	GLuint _load () {
+		std::string vert_filepath = prints("shaders/%s", vert_name);
+		std::string frag_filepath = prints("shaders/%s", frag_name);
 		
-		gl_prog = link_program(vert, frag, vert_filepath.c_str(), frag_filepath.c_str());
+		return load_program(vert_filepath.c_str(), frag_filepath.c_str());
+	}
+	void load () {
+		gl_prog = _load();
+	}
+	bool try_reload () {
+		auto tmp = _load();
+		if (tmp != 0) {
+			unload_program(gl_prog);
+			gl_prog = tmp;
+		}
+		return tmp;
+	}
+	bool poll_reload_shader () {
+		#if RZ_DBG
+		std::string vert_filepath = prints("shaders/%s", vert_name);
+		std::string frag_filepath = prints("shaders/%s", frag_name);
 		
-		glDeleteShader(vert);
-		glDeleteShader(frag);
+		FILETIME vt, ft;
+		
+		GetFileTime(_vert_h, NULL, NULL, &vt);
+		GetFileTime(_frag_h, NULL, NULL, &ft);
+		
+		auto vr = CompareFileTime(&_vert_t, &vt);
+		auto fr = CompareFileTime(&_frag_t, &ft);
+		
+		bool reload = vr != 0 || fr != 0;
+		dbg_assert(vr == 0 || vr == -1);
+		dbg_assert(fr == 0 || fr == -1);
+		
+		_vert_t = vt;
+		_frag_t = ft;
+		
+		if (reload) {
+			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filepath.c_str(), frag_filepath.c_str());
+			reload = try_reload();
+		}
+		return reload;
+		#else
+		return false;
+		#endif
+	}
+	
+	void bind () {
+		glUseProgram(gl_prog);
 	}
 };
 
 struct Base_Uniform {
 	GLint	gl_loc;
 	
-	void load (GLuint gl_prog, cstr name) {
+	void get_loc (GLuint gl_prog, cstr name) {
 		gl_loc = glGetUniformLocation(gl_prog, name);
 	}
 };
@@ -147,16 +223,14 @@ struct Uniform_M4 : public Base_Uniform {
 };
 
 struct Shader : public Base_Shader {
+	Shader (cstr v, cstr f): Base_Shader{v,f} {}
 	
 	Uniform_M4		world_to_clip;
 	
 	void load () {
-		Base_Shader::load("test.vert", "test.frag");
+		Base_Shader::load();
 		
-		world_to_clip.load(gl_prog, "world_to_clip");
-	}
-	void bind () {
-		glUseProgram(gl_prog);
+		world_to_clip.get_loc(gl_prog, "world_to_clip");
 	}
 };
 
@@ -209,12 +283,19 @@ struct Mesh_Vbo {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
-		GLint pos =	glGetAttribLocation(shad.gl_prog, "pos_world");
-		GLint col =	glGetAttribLocation(shad.gl_prog, "col");
-		
+		GLint pos =		glGetAttribLocation(shad.gl_prog, "pos_world");
 		glEnableVertexAttribArray(pos);
 		glVertexAttribPointer(pos,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, pos));
 		
+		GLint norm =	glGetAttribLocation(shad.gl_prog, "norm_world");
+		glEnableVertexAttribArray(norm);
+		glVertexAttribPointer(norm,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, norm));
+		
+		GLint uv =		glGetAttribLocation(shad.gl_prog, "uv");
+		glEnableVertexAttribArray(uv);
+		glVertexAttribPointer(uv,	2, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, uv));
+		
+		GLint col =		glGetAttribLocation(shad.gl_prog, "col");
 		glEnableVertexAttribArray(col);
 		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
 		

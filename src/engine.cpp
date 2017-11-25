@@ -143,13 +143,17 @@ int main (int argc, char** argv) {
 	Mesh_Vbo	vbo_floor;
 	Mesh_Vbo	vbo_cerberus;
 	
-	Shader		shad;
+	Shader		shad = {	"test.vert",	"test.frag" };
+	Shader		shad2 = {	"normals.vert",	"normals.frag" };
+	shad.init();
+	shad2.init();
+	
+	shad.load();
+	shad2.load();
 	
 	vbo_shapes.gen();
 	vbo_floor.gen();
 	vbo_cerberus.gen();
-	
-	shad.load();
 	
 	load_mesh(&vbo_cerberus, "cerberus/cerberus.obj", v3(0,0,2));
 	
@@ -174,6 +178,9 @@ int main (int argc, char** argv) {
 		glfwPollEvents();
 		
 		if (glfwWindowShouldClose(wnd)) break;
+		
+		shad.poll_reload_shader();
+		shad2.poll_reload_shader();
 		
 		iv2 wnd_dim;
 		v2	wnd_dim_aspect;
@@ -263,8 +270,12 @@ int main (int argc, char** argv) {
 			vbo_floor.upload();
 			vbo_floor.draw_all(shad);
 			
+			
+			shad2.bind();
+			shad2.world_to_clip.set(world_to_clip);
+			
 			vbo_cerberus.upload();
-			vbo_cerberus.draw_all(shad);
+			vbo_cerberus.draw_all(shad2);
 		}
 		
 		glfwSwapBuffers(wnd);
