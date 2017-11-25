@@ -6,7 +6,7 @@ DONE:
  -> fastest complie (while always rebuilding all code) is to include all .c files into one .c file and compile that to a seperate .o/.obj file and link it to the main object
  -> unused function stripping works, ~90KB executable
  
-#2017.11.24 dr. tag
+#2017.11.24 fr. tag-nacht
  implement shader loading
  
  saving window positioning
@@ -18,6 +18,12 @@ DONE:
  implement shader loading
  -> auto reload on file change with GetFileTime() polling per file
  
+#2017.11.25 sa. nacht-tag
+ implement cubemap skybox instead of clear color
+ -generate this cubemap with a shader
+ -write a nice looking skybox generator shader (try to look like a sky)
+  -sky/ground/horizon_fog with fog slider
+ 
 TODO
 -FEATURES:
  
@@ -25,8 +31,12 @@ TODO
  -probably will need $include command in shader
  
  implement cubemap skybox instead of clear color
- -generate this cubemap with a shader
  -write a nice looking skybox generator shader (try to look like a sky)
+  -add sun
+ 
+ simple way of doing dynamic tweak variables
+ -overlayed text editor to allow tweaking in fullscreen
+  -> might easaly become easier to use and more flexible than external text format
  
 -BUGS:
  stuck wasd/space/ctrl movement sometimes

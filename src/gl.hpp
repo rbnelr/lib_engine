@@ -280,7 +280,7 @@ static constexpr v3 MESH_DEFAULT_NORM =		0;
 static constexpr v2 MESH_DEFAULT_UV =		0.5f;
 static constexpr v3 MESH_DEFAULT_COL =		1;
 
-typedef u16 vert_indx_t;
+typedef u32 vert_indx_t;
 
 struct Mesh_Vbo {
 	GLuint						vbo_vert;
@@ -341,7 +341,7 @@ struct Mesh_Vbo {
 		bind(shad);
 		
 		if (indices.size()) {
-			glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_SHORT, NULL);
+			glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, NULL);
 		} else {
 			glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
 		}

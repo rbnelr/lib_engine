@@ -139,9 +139,6 @@ int main (int argc, char** argv) {
 	}
 	
 	//
-	Mesh_Vbo	vbo_shapes;
-	Mesh_Vbo	vbo_floor;
-	Mesh_Vbo	vbo_cerberus;
 	
 	Shader		shad = {		"test.vert",	"test.frag" };
 	Shader		shad2 = {		"normals.vert",	"normals.frag" };
@@ -157,11 +154,23 @@ int main (int argc, char** argv) {
 	
 	Skybox		skybox;
 	
+	Mesh_Vbo	vbo_shapes;
 	vbo_shapes.gen();
+	Mesh_Vbo	vbo_floor;
 	vbo_floor.gen();
+	Mesh_Vbo	vbo_cerberus;
 	vbo_cerberus.gen();
+	Mesh_Vbo	vbo_pedestal;
+	vbo_pedestal.gen();
+	Mesh_Vbo	vbo_nier;
+	vbo_nier.gen();
+	//Mesh_Vbo	vbo_multi_obj_test;
+	//vbo_multi_obj_test.gen();
 	
 	load_mesh(&vbo_cerberus, "cerberus/cerberus.obj", v3(0,0,2));
+	load_mesh(&vbo_pedestal, "pedestal.obj", v3(5,-1,0));
+	//load_mesh(&vbo_nier, "nier_models_test.obj", v3(8,-4,0));
+	//load_mesh(&vbo_multi_obj_test, "multi_obj_test.obj", v3(8,-4,0));
 	
 	// 
 	f64 prev_t = glfwGetTime();
@@ -239,7 +248,7 @@ int main (int argc, char** argv) {
 			
 			m4 cam_to_clip;
 			{
-				f32 vfov =			deg(0 ? 70 : 120);
+				f32 vfov =			deg(1 ? 70 : 90);
 				f32 clip_near =		1.0f/16;
 				f32 clip_far =		512;
 				
@@ -267,11 +276,7 @@ int main (int argc, char** argv) {
 		
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
-		if (0) { // draw clear color
-			v4 clear_color = v4(srgb(41,49,52)*3, 1);
-			glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
-			glClear(GL_COLOR_BUFFER_BIT);
-		} else { // draw skybox
+		if (1) { // draw skybox
 			glDisable(GL_DEPTH_TEST);
 			
 			shad_skybox.bind();
@@ -282,6 +287,10 @@ int main (int argc, char** argv) {
 			skybox.draw();
 			
 			glEnable(GL_DEPTH_TEST);
+		} else { // draw clear color
+			v4 clear_color = v4(srgb(41,49,52)*3, 1);
+			glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
+			glClear(GL_COLOR_BUFFER_BIT);
 		}
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
@@ -308,6 +317,15 @@ int main (int argc, char** argv) {
 			
 			vbo_cerberus.upload();
 			vbo_cerberus.draw_all(shad2);
+			
+			vbo_pedestal.upload();
+			vbo_pedestal.draw_all(shad2);
+			
+			vbo_nier.upload();
+			vbo_nier.draw_all(shad2);
+			
+			//vbo_multi_obj_test.upload();
+			//vbo_multi_obj_test.draw_all(shad2);
 		}
 		
 		glfwSwapBuffers(wnd);
