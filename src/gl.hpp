@@ -48,13 +48,15 @@ static bool get_program_link_log (GLuint prog, std::string* log) {
 	}
 }
 
-static GLuint load_shader (GLenum type, cstr filepath) {
+static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
+	bool success = true;
+	
 	GLuint shad = glCreateShader(type);
 	
 	std::string text;
 	if (!read_text_file(filepath, &text)) {
 		log_warning("shader file \"%s\" could not be loaded!", filepath);
-		return 0;
+		return false; // fail
 	}
 	
 	{
@@ -71,7 +73,8 @@ static GLuint load_shader (GLenum type, cstr filepath) {
 		std::string log_str;
 		bool log_avail = get_shader_compile_log(shad, &log_str);
 		
-		if (status == GL_FALSE) {
+		success = status == GL_TRUE;
+		if (!success) {
 			// compilation failed
 			log_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath, log_avail ? log_str.c_str() : "<no log available>");
 		} else {
@@ -82,13 +85,19 @@ static GLuint load_shader (GLenum type, cstr filepath) {
 		}
 	}
 	
-	return shad;
+	*out = shad;
+	return success;
 }
-static GLuint load_program (cstr vert_filepath, cstr frag_filepath) {
+static GLuint load_program (cstr vert_filepath, cstr frag_filepath, GLuint* out) {
+	bool success = true;
+	
 	GLuint prog = glCreateProgram();
 	
-	GLuint vert = load_shader(GL_VERTEX_SHADER, vert_filepath);
-	GLuint frag = load_shader(GL_FRAGMENT_SHADER, frag_filepath);
+	GLuint vert;
+	GLuint frag;
+	
+	success = success && load_shader(GL_VERTEX_SHADER, vert_filepath, &vert);
+	success = success && load_shader(GL_FRAGMENT_SHADER, frag_filepath, &frag);
 	
 	glAttachShader(prog, vert);
 	glAttachShader(prog, frag);
@@ -102,7 +111,8 @@ static GLuint load_program (cstr vert_filepath, cstr frag_filepath) {
 		std::string log_str;
 		bool log_avail = get_program_link_log(prog, &log_str);
 		
-		if (status == GL_FALSE) {
+		success = status == GL_TRUE;
+		if (!success) {
 			// linking failed
 			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
 		} else {
@@ -119,11 +129,27 @@ static GLuint load_program (cstr vert_filepath, cstr frag_filepath) {
 	glDeleteShader(vert);
 	glDeleteShader(frag);
 	
-	return prog;
+	*out = prog;
+	return success;
 }
 static void unload_program (GLuint prog) {
 	glDeleteProgram(prog);
 }
+
+struct Base_Uniform {
+	GLint	gl_loc;
+	
+	void get_loc (GLuint gl_prog, cstr name) {
+		gl_loc = glGetUniformLocation(gl_prog, name);
+	}
+};
+
+struct Uniform_M4 : public Base_Uniform {
+	void set (m4 m) {	glUniformMatrix4fv(gl_loc, 1, GL_FALSE, &m.arr[0][0]); }
+};
+struct Uniform_V2 : public Base_Uniform {
+	void set (v2 v) {	glUniform2fv(gl_loc, 1, &v.x); }
+};
 
 struct Base_Shader {
 	GLuint		gl_prog;
@@ -158,22 +184,23 @@ struct Base_Shader {
 		}
 		#endif
 	}
-	GLuint _load () {
+	bool _load (GLuint* out) {
 		std::string vert_filepath = prints("shaders/%s", vert_name);
 		std::string frag_filepath = prints("shaders/%s", frag_name);
 		
-		return load_program(vert_filepath.c_str(), frag_filepath.c_str());
+		return load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
 	}
 	void load () {
-		gl_prog = _load();
+		_load(&gl_prog);
 	}
 	bool try_reload () {
-		auto tmp = _load();
-		if (tmp != 0) {
+		GLuint tmp;
+		bool success = _load(&tmp);
+		if (success) {
 			unload_program(gl_prog);
 			gl_prog = tmp;
 		}
-		return tmp;
+		return success;
 	}
 	bool poll_reload_shader () {
 		#if RZ_DBG
@@ -188,18 +215,18 @@ struct Base_Shader {
 		auto vr = CompareFileTime(&_vert_t, &vt);
 		auto fr = CompareFileTime(&_frag_t, &ft);
 		
-		bool reload = vr != 0 || fr != 0;
+		bool reloaded = vr != 0 || fr != 0;
 		dbg_assert(vr == 0 || vr == -1);
 		dbg_assert(fr == 0 || fr == -1);
 		
 		_vert_t = vt;
 		_frag_t = ft;
 		
-		if (reload) {
+		if (reloaded) {
 			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filepath.c_str(), frag_filepath.c_str());
-			reload = try_reload();
+			reloaded = try_reload();
 		}
-		return reload;
+		return reloaded;
 		#else
 		return false;
 		#endif
@@ -210,27 +237,31 @@ struct Base_Shader {
 	}
 };
 
-struct Base_Uniform {
-	GLint	gl_loc;
-	
-	void get_loc (GLuint gl_prog, cstr name) {
-		gl_loc = glGetUniformLocation(gl_prog, name);
-	}
-};
-
-struct Uniform_M4 : public Base_Uniform {
-	void set (m4 m) {	glUniformMatrix4fv(gl_loc, 1, GL_FALSE, &m.arr[0][0]); }
-};
-
 struct Shader : public Base_Shader {
 	Shader (cstr v, cstr f): Base_Shader{v,f} {}
 	
-	Uniform_M4		world_to_clip;
+	struct Common_Uniforms {
+		Uniform_M4		world_to_clip;
+		Uniform_V2		mcursor_pos;
+		Uniform_V2		screen_dim;
+		
+		void set (m4 world_to_clip_, v2 mcursor_pos_px, v2 screen_dim_px) {
+			world_to_clip.set(	world_to_clip_ );
+			mcursor_pos.set(	mcursor_pos_px );
+			screen_dim.set(		screen_dim_px );
+		}
+	} common;
+	
+	Uniform_M4			skybox_to_clip;
 	
 	void load () {
 		Base_Shader::load();
 		
-		world_to_clip.get_loc(gl_prog, "world_to_clip");
+		common.world_to_clip.get_loc(gl_prog, "world_to_clip");
+		common.mcursor_pos.get_loc(gl_prog, "mcursor_pos");
+		common.screen_dim.get_loc(gl_prog, "screen_dim");
+		
+		skybox_to_clip.get_loc(gl_prog, "skybox_to_clip");
 	}
 };
 
@@ -299,7 +330,11 @@ struct Mesh_Vbo {
 		glEnableVertexAttribArray(col);
 		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
 		
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
+		if (indices.size()) {
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
+		} else {
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+		}
 	}
 	
 	void draw_all (Base_Shader shad) {
@@ -310,5 +345,15 @@ struct Mesh_Vbo {
 		} else {
 			glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
 		}
+	}
+};
+
+struct Skybox {
+	
+	
+	void draw () {
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+		glDrawArrays(GL_TRIANGLES, 0, 6*6);
 	}
 };

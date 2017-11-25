@@ -143,13 +143,19 @@ int main (int argc, char** argv) {
 	Mesh_Vbo	vbo_floor;
 	Mesh_Vbo	vbo_cerberus;
 	
-	Shader		shad = {	"test.vert",	"test.frag" };
-	Shader		shad2 = {	"normals.vert",	"normals.frag" };
+	Shader		shad = {		"test.vert",	"test.frag" };
+	Shader		shad2 = {		"normals.vert",	"normals.frag" };
+	Shader		shad_skybox = {	"skybox.vert",	"skybox.frag" };
+	
 	shad.init();
 	shad2.init();
+	shad_skybox.init();
 	
 	shad.load();
 	shad2.load();
+	shad_skybox.load();
+	
+	Skybox		skybox;
 	
 	vbo_shapes.gen();
 	vbo_floor.gen();
@@ -181,6 +187,7 @@ int main (int argc, char** argv) {
 		
 		shad.poll_reload_shader();
 		shad2.poll_reload_shader();
+		shad_skybox.poll_reload_shader();
 		
 		iv2 wnd_dim;
 		v2	wnd_dim_aspect;
@@ -190,20 +197,24 @@ int main (int argc, char** argv) {
 			v2 tmp = (v2)wnd_dim;
 			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
 		}
-		v2 mouse_look_diff;
+		v2	mouse_look_diff;
+		iv2	mcursor_pos_px;
 		{
 			mouse_look_diff = inp.mouse_look_diff;
 			inp.mouse_look_diff = 0;
+			
+			{
+				f64 x, y;
+				glfwGetCursorPos(wnd, &x, &y);
+				mcursor_pos_px = iv2((int)x, (int)y);
+			}
 		}
-		
-		//
-		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
-		
-		v4 clear_color = v4(srgb(41,49,52)*3, 1);
-		glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+		auto bottom_up_mcursor_pos = [&] () -> v2 {
+			return v2(mcursor_pos_px.x, wnd_dim.y -mcursor_pos_px.y);
+		};
 		
 		m4 world_to_clip;
+		m4 skybox_to_clip;
 		{
 			{
 				v2 mouse_look_sens = v2(deg(1.0f / 8));
@@ -228,7 +239,7 @@ int main (int argc, char** argv) {
 			
 			m4 cam_to_clip;
 			{
-				f32 vfov =			deg(70);
+				f32 vfov =			deg(0 ? 70 : 120);
 				f32 clip_near =		1.0f/16;
 				f32 clip_far =		512;
 				
@@ -251,7 +262,28 @@ int main (int argc, char** argv) {
 			}
 			
 			world_to_clip = cam_to_clip * world_to_cam;
+			skybox_to_clip = cam_to_clip * world_to_cam_rot;
 		}
+		
+		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
+		
+		if (0) { // draw clear color
+			v4 clear_color = v4(srgb(41,49,52)*3, 1);
+			glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
+			glClear(GL_COLOR_BUFFER_BIT);
+		} else { // draw skybox
+			glDisable(GL_DEPTH_TEST);
+			
+			shad_skybox.bind();
+			shad_skybox.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+			shad_skybox.skybox_to_clip.set(skybox_to_clip);
+			//shad_skybox.tex_skybox.bind();
+			
+			skybox.draw();
+			
+			glEnable(GL_DEPTH_TEST);
+		}
+		glClear(GL_DEPTH_BUFFER_BIT);
 		
 		{ // Draw all
 			vbo_shapes.clear();
@@ -262,7 +294,7 @@ int main (int argc, char** argv) {
 			
 			
 			shad.bind();
-			shad.world_to_clip.set(world_to_clip);
+			shad.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
 			
 			vbo_shapes.upload();
 			vbo_shapes.draw_all(shad);
@@ -272,7 +304,7 @@ int main (int argc, char** argv) {
 			
 			
 			shad2.bind();
-			shad2.world_to_clip.set(world_to_clip);
+			shad2.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
 			
 			vbo_cerberus.upload();
 			vbo_cerberus.draw_all(shad2);

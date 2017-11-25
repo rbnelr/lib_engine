@@ -53,16 +53,6 @@ static void gen_cube (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world, m3 or
 	v3 HLH = v3(+1,-1,+1);
 	v3 LHH = v3(-1,+1,+1);
 	v3 HHH = v3(+1,+1,+1);
-		
-	quad(	LLH,
-			HLH,
-			HHH,
-			LHH );
-	
-	quad(	HLL,
-			LLL,
-			LHL,
-			HHL );
 	
 	quad(	LHL,
 			LLL,
@@ -83,6 +73,16 @@ static void gen_cube (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world, m3 or
 			LHL,
 			LHH,
 			HHH );
+	
+	quad(	HLL,
+			LLL,
+			LHL,
+			HHL );
+			
+	quad(	LLH,
+			HLH,
+			HHH,
+			LHH );
 	
 	dbg_assert(out == data->end()); // check size calculation above
 }
@@ -190,20 +190,25 @@ static void gen_grid_floor (std::vector<Mesh_Vertex>* data) {
 	
 	auto out = vector_append(data, floor_r.y*2 * floor_r.x*2 * 6);
 	
-	auto emit_quad = [&] (v3 pos, v3 col) {
-		*out++ = { pos +v3(+0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
-		*out++ = { pos +v3(+0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
-		*out++ = { pos +v3(-0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
-		
-		*out++ = { pos +v3(-0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
-		*out++ = { pos +v3(+0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
-		*out++ = { pos +v3(-0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+	auto emit_quad = [&] (v3 pos, bool color) {
+		if (color) {
+			for (ui i=0; i<6; ++i)
+				*out++ = { QNAN, MESH_DEFAULT_NORM, MESH_DEFAULT_UV, QNAN };
+		} else {
+			v3 col = color ? srgb(224,226,228) : srgb(41,49,52);
+			*out++ = { pos +v3(+0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+			*out++ = { pos +v3(+0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+			*out++ = { pos +v3(-0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+			
+			*out++ = { pos +v3(-0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+			*out++ = { pos +v3(+0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+			*out++ = { pos +v3(-0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
+		}
 	};
 	
 	for (s32 y=0; y<(floor_r.y*2); ++y) {
 		for (s32 x=0; x<(floor_r.x*2); ++x) {
-			v3 col = BOOL_XOR(EVEN(x), EVEN(y)) ? srgb(224,226,228) : srgb(41,49,52);
-			emit_quad( v3(+0.5f,+0.5f,Z) +v3((f32)(x -floor_r.x)*tile_dim, (f32)(y -floor_r.y)*tile_dim, 0), col );
+			emit_quad( v3(+0.5f,+0.5f,Z) +v3((f32)(x -floor_r.x)*tile_dim, (f32)(y -floor_r.y)*tile_dim, 0), BOOL_XOR(EVEN(x), EVEN(y)) );
 		}
 	}
 	
