@@ -103,16 +103,34 @@ namespace parse {
 	
 }
 
-static void load_mesh (std::vector<Mesh_Vertex>* data, cstr name, v3 pos_offs=0) {
+#include <unordered_map>
+
+namespace std {
+	template<> struct hash<v2> {
+		size_t operator() (v2 const& v) const {
+			return	hash<f32>()(v.x) ^ hash<f32>()(v.y);
+		}
+	};
+	template<> struct hash<v3> {
+		size_t operator() (v3 const& v) const {
+			return	hash<f32>()(v.x) ^ hash<f32>()(v.y) ^ hash<f32>()(v.z);
+		}
+	};
+	template<> struct hash<Mesh_Vertex> {
+		size_t operator() (Mesh_Vertex const& v) const {
+			return hash<v3>()(v.pos) ^ hash<v3>()(v.norm) ^ hash<v2>()(v.uv) ^ hash<v3>()(v.col);
+		}
+	};
+}
+
+static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 	
 	std::string filepath = prints("assets_src/meshes/%s", name);
 	
-	data->clear();
-	
 	struct Vert_Indecies {
 		u32		pos;
-		u32		norm;
 		u32		uv;
+		u32		nrm;
 	};
 	struct Triangle {
 		Vert_Indecies arr[3];
@@ -128,7 +146,7 @@ static void load_mesh (std::vector<Mesh_Vertex>* data, cstr name, v3 pos_offs=0)
 	nrms.reserve(4*1024);
 	tris.reserve(4*1024);
 	
-	{
+	{ // load data from 
 		std::string file;
 		if (!read_text_file(filepath.c_str(), &file)) {
 			dbg_assert(false, "Mesh file \"%s\" not found!", filepath.c_str());
@@ -193,22 +211,46 @@ static void load_mesh (std::vector<Mesh_Vertex>* data, cstr name, v3 pos_offs=0)
 		str obj_name = {};
 		
 		auto face = [&] () {
-			Triangle tri;
+			Vert_Indecies vert[4];
 			
-			for (ui i=0; i<3; ++i) {
+			ui i = 0;
+			for (;;) {
+				
 				whitespace(&cur);
-				if (!int_(&cur, &tri.arr[i].pos) || tri.arr[i].pos == 0) goto error;
 				
-				if (*cur++ != '/') goto error;
-				if (!int_(&cur, &tri.arr[i].uv) || tri.arr[i].uv == 0) goto error;
+				bool pos = int_(&cur, &vert[i].pos);
+				if (!pos || vert[i].pos == 0) goto error; // position missing
 				
-				if (*cur++ != '/') goto error;
-				if (!int_(&cur, &tri.arr[i].norm) || tri.arr[i].norm == 0) goto error;
+				if (*cur == '/') { ++cur;
+					bool uv = int_(&cur, &vert[i].uv);
+					if (uv && vert[i].uv == 0) goto error; // out of range index
+					
+					if (*cur++ != '/') goto error;
+					
+					bool nrm = int_(&cur, &vert[i].nrm);
+					if (nrm && vert[i].nrm == 0) goto error; // out of range index
+				} else {
+					vert[i].uv = 0;
+					vert[i].nrm = 0;
+				}
+				
+				++i;
+				if (newline(&cur) || *cur == '\0') break;
+				if (i == 4) goto error; // only triangles and quads supported
 			}
 			
-			if (!newline(&cur)) goto error;
-			
-			tris.push_back(tri);
+			if (i == 3) {
+				tris.push_back({	vert[0],
+									vert[1],
+									vert[2] });
+			} else /* i == 4 */ {
+				tris.push_back({	vert[1],
+									vert[2],
+									vert[0] });
+				tris.push_back({	vert[0],
+									vert[2],
+									vert[3] });
+			}
 			
 			return;
 			
@@ -265,22 +307,45 @@ static void load_mesh (std::vector<Mesh_Vertex>* data, cstr name, v3 pos_offs=0)
 		}
 	}
 	
-	{
-		data->reserve( tris.size() * 3 ); // max possible size
+	vbo->vertecies.clear();
+	vbo->indices.clear();
+	
+	{ // expand triangles from individually indexed poss/uvs/nrms to non-indexed
+		vbo->vertecies.reserve( tris.size() * 3 ); // max possible size
+		vbo->indices.reserve( tris.size() * 3 );
 		
-		//std::unordered_map<Mesh_Vertex, u32> 
+		std::unordered_map<Mesh_Vertex, vert_indx_t> unique;
 		
 		for (auto& t : tris) {
 			for (ui i=0; i<3; ++i) {
-				Mesh_Vertex exp;
+				Mesh_Vertex v;
 				
-				exp.pos =	poss[t.arr[i].pos -1] +pos_offs;
-				exp.norm =	nrms[t.arr[i].norm -1];
-				exp.uv =	uvs[t.arr[i].uv -1];
+				v.pos =		poss[t.arr[i].pos -1] +pos_offs;
+				v.norm =	t.arr[i].nrm ?	nrms[t.arr[i].nrm -1]	: MESH_DEFAULT_NORM;
+				v.uv =		t.arr[i].uv ?	uvs[t.arr[i].uv -1]		: MESH_DEFAULT_UV;
+				v.col =		MESH_DEFAULT_COL;
 				
-				data->push_back(exp);
+				auto entry = unique.find(v);
+				bool is_unique = entry == unique.end();
+				
+				
+				if (is_unique) {
+					
+					auto indx = (vert_indx_t)unique.size();
+					unique.insert({v, indx});
+					
+					vbo->vertecies.push_back(v);
+					
+					vbo->indices.push_back(indx);
+					
+				} else {
+					
+					vbo->indices.push_back(entry->second);
+					
+				}
 			}
 		}
 		
 	}
+	
 }

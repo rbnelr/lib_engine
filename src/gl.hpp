@@ -165,27 +165,49 @@ struct Mesh_Vertex {
 	v3	norm;
 	v2	uv;
 	v3	col;
+	
+	bool operator== (Mesh_Vertex cr r) const {
+		//return all(pos == r.pos) && all(norm == r.norm) && all(uv == r.uv) && all(col == r.col);
+		return memcmp(this, &r, sizeof(Mesh_Vertex)) == 0;
+	}
 };
-static constexpr v3 MESH_DEFAULT_NORM =		QNAN;
+static constexpr v3 MESH_DEFAULT_NORM =		0;
 static constexpr v2 MESH_DEFAULT_UV =		0.5f;
 static constexpr v3 MESH_DEFAULT_COL =		1;
 
+typedef u16 vert_indx_t;
+
 struct Mesh_Vbo {
-	GLuint						gl_vbo;
-	std::vector<Mesh_Vertex>	data;
+	GLuint						vbo_vert;
+	GLuint						vbo_indx;
+	std::vector<Mesh_Vertex>	vertecies;
+	std::vector<vert_indx_t>	indices;
+	
+	void clear () {
+		vertecies.clear();
+		indices.clear();
+	}
 	
 	void gen () {
-		glGenBuffers(1, &gl_vbo);
+		glGenBuffers(1, &vbo_vert);
+		glGenBuffers(1, &vbo_indx);
 	}
 	
 	void upload () {
-		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(data), data.data(), GL_STATIC_DRAW);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
+		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(vertecies), NULL, GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(vertecies), vertecies.data(), GL_STATIC_DRAW);
+		
+		if (indices.size()) {
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, vector_size_bytes(indices), NULL, GL_STATIC_DRAW);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, vector_size_bytes(indices), indices.data(), GL_STATIC_DRAW);
+		}
 	}
 	
 	void bind (Base_Shader shad) {
 		
-		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
 		GLint pos =	glGetAttribLocation(shad.gl_prog, "pos_world");
 		GLint col =	glGetAttribLocation(shad.gl_prog, "col");
@@ -195,5 +217,17 @@ struct Mesh_Vbo {
 		
 		glEnableVertexAttribArray(col);
 		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
+		
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
+	}
+	
+	void draw_all (Base_Shader shad) {
+		bind(shad);
+		
+		if (indices.size()) {
+			glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_SHORT, NULL);
+		} else {
+			glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
+		}
 	}
 };

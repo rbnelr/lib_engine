@@ -151,7 +151,7 @@ int main (int argc, char** argv) {
 	
 	shad.load();
 	
-	load_mesh(&vbo_cerberus.data, "cerberus/cerberus.obj", v3(0,0,2));
+	load_mesh(&vbo_cerberus, "cerberus/cerberus.obj", v3(0,0,2));
 	
 	// 
 	f64 prev_t = glfwGetTime();
@@ -247,25 +247,24 @@ int main (int argc, char** argv) {
 		}
 		
 		{ // Draw all
-			gen_shapes(&vbo_shapes.data);
-			gen_grid_floor(&vbo_floor.data);
+			vbo_shapes.clear();
+			gen_shapes(&vbo_shapes.vertecies);
 			
-			vbo_shapes.upload();
-			vbo_floor.upload();
-			vbo_cerberus.upload();
+			vbo_floor.clear();
+			gen_grid_floor(&vbo_floor.vertecies);
 			
 			
 			shad.bind();
 			shad.world_to_clip.set(world_to_clip);
 			
-			vbo_shapes.bind(shad);
-			glDrawArrays(GL_TRIANGLES, 0, vbo_shapes.data.size());
+			vbo_shapes.upload();
+			vbo_shapes.draw_all(shad);
 			
-			vbo_floor.bind(shad);
-			glDrawArrays(GL_TRIANGLES, 0, vbo_floor.data.size());
+			vbo_floor.upload();
+			vbo_floor.draw_all(shad);
 			
-			vbo_cerberus.bind(shad);
-			glDrawArrays(GL_TRIANGLES, 0, vbo_cerberus.data.size());
+			vbo_cerberus.upload();
+			vbo_cerberus.draw_all(shad);
 		}
 		
 		glfwSwapBuffers(wnd);

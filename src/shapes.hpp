@@ -176,14 +176,10 @@ static void gen_iso_shphere (std::vector<Mesh_Vertex>* data, f32 r, u32 wfaces, 
 }
 
 static void gen_shapes (std::vector<Mesh_Vertex>* data) {
-	
-	data->clear();
-	
 	gen_cube(data,			1,						v3( 0,+4,0), rotate3_Z(deg(37)));
 	gen_tetrahedron(data,	2.0f / (1 +1.0f/3),		v3(+4,+4,0), rotate3_Z(deg(13)));
 	gen_cylinder(data,		1, 2, 24, 				v3(-4,+4,0));
 	gen_iso_shphere(data,	1, 64, 32,				v3(-4, 0,0));
-	
 }
 
 static void gen_grid_floor (std::vector<Mesh_Vertex>* data) {
@@ -192,7 +188,6 @@ static void gen_grid_floor (std::vector<Mesh_Vertex>* data) {
 	f32	tile_dim = 1;
 	iv2	floor_r = 16;
 	
-	data->clear();
 	auto out = vector_append(data, floor_r.y*2 * floor_r.x*2 * 6);
 	
 	auto emit_quad = [&] (v3 pos, v3 col) {
