@@ -28,36 +28,26 @@
 #if RZ_COMP == RZ_COMP_MSVC
 	#define FORCEINLINE						__forceinline
 	#define NOINLINE						__declspec(noinline)
-	#define BUILTIN_F32_INF					((float)(1e+300 * 1e+300))
-	#define BUILTIN_F64_INF					(1e+300 * 1e+300)
 	#define DBGBREAK						__debugbreak()
 	
 	#define F32_INF							((float)(1e+300 * 1e+300))
 	#define F64_INF							(1e+300 * 1e+300)
-	#define F32_QNAN						(0.0f/0.0f)
-	#define F64_QNAN						(0.0/0.0)
+	#define F32_QNAN						std::numeric_limits<float>::quiet_NaN()
+	#define F64_QNAN						std::numeric_limits<double>::quiet_NaN()
 	
 #elif RZ_COMP == RZ_COMP_LLVM
 	#define FORCEINLINE						__attribute__((always_inline)) inline
 	#define NOINLINE						__attribute__((noinline))
-	#define BUILTIN_F32_INF					(__builtin_inff())
-	#define BUILTIN_F64_INF					(__builtin_inf())
-	#define BUILTIN_F32_QNAN				__builtin_nan("0")
-	#define BUILTIN_F64_QNAN				__builtin_nan("0")
 	#define DBGBREAK						do { asm volatile ("int3"); } while(0)
 		
 	#define F32_INF							(__builtin_inff())
 	#define F64_INF							(__builtin_inf())
-	#define F32_QNAN						__builtin_nan("0")
-	#define F64_QNAN						__builtin_nan("0")
+	#define F32_QNAN						((float)__builtin_nan("0"))
+	#define F64_QNAN						(__builtin_nan("0"))
 	
 #elif RZ_COMP == RZ_COMP_GCC
 	#define FORCEINLINE						__attribute__((always_inline)) inline
 	#define NOINLINE						__attribute__((noinline))
-	#define F32_INF							(__builtin_inff())
-	#define F64_INF							(__builtin_inf())
-	#define F32_QNAN						__builtin_nan("0")
-	#define F64_QNAN						__builtin_nan("0")
 	
 	#if RZ_PLATF == RZ_PLATF_GENERIC_WIN
 		#define DBGBREAK					do { __debugbreak(); } while(0)
@@ -69,8 +59,8 @@
 	
 	#define F32_INF							(__builtin_inff())
 	#define F64_INF							(__builtin_inf())
-	#define F32_QNAN						__builtin_nan("0")
-	#define F64_QNAN						__builtin_nan("0")
+	#define F32_QNAN						((float)__builtin_nan("0"))
+	#define F64_QNAN						(__builtin_nan("0"))
 	
 #endif
 
@@ -171,6 +161,22 @@ static T* lsearch (std::vector<T>& arr, FUNC comp_with) {
 	return nullptr; // not found
 }
 
+template <typename T> static typename std::vector<T>::iterator vector_append (std::vector<T>* vec) {
+	uptr old_len = vec->size();
+	vec->resize( old_len +1 );
+	return vec->begin() +old_len;
+	
+}
+template <typename T> static typename std::vector<T>::iterator vector_append (std::vector<T>* vec, uptr n) {
+	uptr old_len = vec->size();
+	vec->resize( old_len +n );
+	return vec->begin() +old_len;
+}
+
+template <typename T> static uptr vector_size_bytes (std::vector<T> cr vec) {
+	return vec.size() * sizeof(T);
+}
+
 // Printf that outputs to a std::string
 static void _prints (std::string* s, cstr format, va_list vl) { // print 
 	for (;;) {
@@ -205,17 +211,21 @@ static std::string prints (cstr format, ...) {
 	return ret;
 }
 
-//
+static u64 get_file_size (FILE* f) {
+	fseek(f, 0, SEEK_END);
+	u64 file_size = ftell(f); // only 32 support for now
+	rewind(f);
+	return file_size;
+}
+
+// reads entire file into already allocated buffer
 static bool read_entire_file (cstr filename, void* buf, u64 expected_file_size) {
 	FILE* f = fopen(filename, "rb"); // read binary
 	if (!f) return false; // fail
 	
 	defer { fclose(f); };
 	
-	fseek(f, 0, SEEK_END);
-	u64 file_size = ftell(f); // only 32 support for now
-	rewind(f);
-	
+	u64 file_size = get_file_size(f);
 	if (file_size != expected_file_size) return false; // fail
 	
 	auto ret = fread(buf, 1,file_size, f);
@@ -223,15 +233,14 @@ static bool read_entire_file (cstr filename, void* buf, u64 expected_file_size) 
 	
 	return true;
 }
+// reads text file into a std::string by overwriting it's previous contents
 static bool read_text_file (cstr filename, std::string* out) {
 	FILE* f = fopen(filename, "rb"); // read binary because i don't want to convert "\r\n" to "\n"
 	if (!f) return false; // fail
 	
 	defer { fclose(f); };
 	
-	fseek(f, 0, SEEK_END);
-	u64 file_size = ftell(f); // only 32 support for now
-	rewind(f);
+	u64 file_size = get_file_size(f);
 	
 	out->resize(file_size);
 	
@@ -241,6 +250,7 @@ static bool read_text_file (cstr filename, std::string* out) {
 	return true;
 }
 
+// overwrites or creates a file with buf
 static bool overwrite_file (cstr filename, void const* buf, u64 write_size) {
 	FILE* f = fopen(filename, "wb"); // write binary (overwrite file if exists / create if not exists)
 	if (!f) return false; // fail

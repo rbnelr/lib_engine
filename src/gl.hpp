@@ -119,10 +119,10 @@ static GLuint link_program (GLuint vert, GLuint frag, cstr vert_filepath, cstr f
 struct Base_Shader {
 	GLuint			gl_prog;
 	
-	void load (cstr vert_filename, cstr frag_filename) {
+	void load (cstr vert_name, cstr frag_name) {
 		
-		std::string vert_filepath = prints("shaders/%s", vert_filename);
-		std::string frag_filepath = prints("shaders/%s", frag_filename);
+		std::string vert_filepath = prints("shaders/%s", vert_name);
+		std::string frag_filepath = prints("shaders/%s", frag_name);
 		
 		GLuint vert = load_shader(GL_VERTEX_SHADER, vert_filepath.c_str());
 		GLuint frag = load_shader(GL_FRAGMENT_SHADER, frag_filepath.c_str());
@@ -160,60 +160,40 @@ struct Shader : public Base_Shader {
 	}
 };
 
-
-template <typename VT> // VT: vertex type
-struct Vbo_Data {
-	std::vector<VT>	_data;
-	
-	void clear () {
-		_data.clear();
-	}
-	VT* append (uptr n=1) {
-		uptr old_len = _data.size();
-		_data.resize( old_len +n );
-		return _data.data() +old_len;
-	}
-	
-	VT const* data () const {
-		return _data.data();
-	}
-	uptr length () const {
-		return _data.size();
-	}
-	uptr get_size_bytes () const  {
-		return length() * sizeof(VT);
-	}
-	
-};
-
-struct Vertex {
-	v3	pos_world;
+struct Mesh_Vertex {
+	v3	pos;
+	v3	norm;
+	v2	uv;
 	v3	col;
 };
+static constexpr v3 MESH_DEFAULT_NORM =		QNAN;
+static constexpr v2 MESH_DEFAULT_UV =		0.5f;
+static constexpr v3 MESH_DEFAULT_COL =		1;
 
-struct Vbo {
-	GLuint	gl_vbo;
+struct Mesh_Vbo {
+	GLuint						gl_vbo;
+	std::vector<Mesh_Vertex>	data;
 	
 	void gen () {
 		glGenBuffers(1, &gl_vbo);
 	}
 	
-	void upload (Vbo_Data<Vertex> cr data) {
+	void upload () {
 		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
-		glBufferData(GL_ARRAY_BUFFER, data.get_size_bytes(), data.data(), GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(data), data.data(), GL_STATIC_DRAW);
 	}
 	
 	void bind (Base_Shader shad) {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, gl_vbo);
 		
-		GLint pos_world =	glGetAttribLocation(shad.gl_prog, "pos_world");
-		GLint col =			glGetAttribLocation(shad.gl_prog, "col");
+		GLint pos =	glGetAttribLocation(shad.gl_prog, "pos_world");
+		GLint col =	glGetAttribLocation(shad.gl_prog, "col");
 		
-		glEnableVertexAttribArray(pos_world);
-		glVertexAttribPointer(pos_world,	3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos_world));
+		glEnableVertexAttribArray(pos);
+		glVertexAttribPointer(pos,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, pos));
 		
 		glEnableVertexAttribArray(col);
-		glVertexAttribPointer(col,			3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, col));
+		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
 	}
 };
