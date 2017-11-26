@@ -78,6 +78,7 @@
 #define M2	fm2
 #define M3	fm3
 #define M4	fm4
+#define HM	fhm
 
 #undef BOOLVEC
 #undef BV2
@@ -143,6 +144,29 @@ public:
 	
 	M4& operator*= (M4 r);
 };
+struct HM { // last row implicit 0,0,0,1
+	V3 arr[4];
+	
+	INL explicit HM () {}
+private: //
+	INL explicit constexpr HM (V3 a, V3 b, V3 c, V3 d): arr{a,b,c,d} {}
+public:
+
+	static constexpr HM row (		V4 a, V4 b, V4 c ) {		return HM{V3(a.x,b.x,c.x),V3(a.y,b.y,c.y),V3(a.z,b.z,c.z),V3(a.w,b.w,c.w)}; }
+	static constexpr HM column (	V3 a, V3 b, V3 c, V3 d ) {	return HM{a,b,c,d}; }
+	static constexpr HM row (		T a, T b, T c, T d,
+									T e, T f, T g, T h,
+									T i, T j, T k, T l ) {		return HM{V3(a,e,i),V3(b,f,j),V3(c,g,k),V3(d,h,l)}; }
+	static constexpr HM ident () {								return row(1,0,0,0, 0,1,0,0, 0,0,1,0); }
+	constexpr HM (M2 m): arr{V3(m.arr[0], 0), V3(m.arr[1], 0), V3(0,0,1), V3(0,0,0)} {}
+	constexpr HM (M3 m): arr{m.arr[0], m.arr[1], m.arr[2], V3(0,0,0)} {}
+	
+	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
+	M3 m3 () const {											return M3::column( arr[0], arr[1], arr[2] ); }
+	M4 m4 () const {											return M4::column( V4(arr[0],0), V4(arr[1],0), V4(arr[2],0), V4(0,0,0,1) ); }
+	
+	HM& operator*= (HM r);
+};
 
 static V2 operator* (M2 m, V2 v) {
 	V2 ret;
@@ -188,6 +212,42 @@ static M4 operator* (M4 l, M4 r) {
 	ret.arr[3] = l * r.arr[3];
 	return ret;
 }
+
+static V3 operator* (HM m, V3 v) { // the common case of wanting to translate/rotate/scale some v3 -> if you just want to rotate/scale instead of doing this "M4*v4(v3,0)" -> just do "M4.m3() * V3"
+	// implicit v.w = 1
+	V3 ret;
+	ret.x = m.arr[0].x * v.x  +m.arr[1].x * v.y  +m.arr[2].x * v.z  +m.arr[3].x;
+	ret.y = m.arr[0].y * v.x  +m.arr[1].y * v.y  +m.arr[2].y * v.z  +m.arr[3].y;
+	ret.z = m.arr[0].z * v.x  +m.arr[1].z * v.y  +m.arr[2].z * v.z  +m.arr[3].z;
+	return ret;
+}
+static HM operator* (HM l, HM r) {
+	HM ret;
+	#if 0
+	ret.arr[0] = l.m3() * r.arr[0];	// implicit r.arr[0].w = 0
+	ret.arr[1] = l.m3() * r.arr[1];	// implicit r.arr[1].w = 0
+	ret.arr[2] = l.m3() * r.arr[2];	// implicit r.arr[2].w = 0
+	ret.arr[3] = l * r.arr[3];		// implicit r.arr[3].w = 1
+	#else
+	ret.arr[0].x = l.arr[0].x * r.arr[0].x  +l.arr[1].x * r.arr[0].y  +l.arr[2].x * r.arr[0].z;
+	ret.arr[0].y = l.arr[0].y * r.arr[0].x  +l.arr[1].y * r.arr[0].y  +l.arr[2].y * r.arr[0].z;
+	ret.arr[0].z = l.arr[0].z * r.arr[0].x  +l.arr[1].z * r.arr[0].y  +l.arr[2].z * r.arr[0].z;
+	
+	ret.arr[1].x = l.arr[0].x * r.arr[1].x  +l.arr[1].x * r.arr[1].y  +l.arr[2].x * r.arr[1].z;
+	ret.arr[1].y = l.arr[0].y * r.arr[1].x  +l.arr[1].y * r.arr[1].y  +l.arr[2].y * r.arr[1].z;
+	ret.arr[1].z = l.arr[0].z * r.arr[1].x  +l.arr[1].z * r.arr[1].y  +l.arr[2].z * r.arr[1].z;
+	
+	ret.arr[2].x = l.arr[0].x * r.arr[2].x  +l.arr[1].x * r.arr[2].y  +l.arr[2].x * r.arr[2].z;
+	ret.arr[2].y = l.arr[0].y * r.arr[2].x  +l.arr[1].y * r.arr[2].y  +l.arr[2].y * r.arr[2].z;
+	ret.arr[2].z = l.arr[0].z * r.arr[2].x  +l.arr[1].z * r.arr[2].y  +l.arr[2].z * r.arr[2].z;
+	
+	ret.arr[3].x = l.arr[0].x * r.arr[3].x  +l.arr[1].x * r.arr[3].y  +l.arr[2].x * r.arr[3].z  +l.arr[3].x;
+	ret.arr[3].y = l.arr[0].y * r.arr[3].x  +l.arr[1].y * r.arr[3].y  +l.arr[2].y * r.arr[3].z  +l.arr[3].y;
+	ret.arr[3].z = l.arr[0].z * r.arr[3].x  +l.arr[1].z * r.arr[3].y  +l.arr[2].z * r.arr[3].z  +l.arr[3].z;
+	#endif
+	return ret;
+}
+
 M2& M2::operator*= (M2 r) {
 	return *this = *this * r;
 }
@@ -195,6 +255,9 @@ M3& M3::operator*= (M3 r) {
 	return *this = *this * r;
 }
 M4& M4::operator*= (M4 r) {
+	return *this = *this * r;
+}
+HM& HM::operator*= (HM r) {
 	return *this = *this * r;
 }
 
@@ -371,6 +434,41 @@ static M4 rotate4_Z (T ang) {
 					+sc.s,	+sc.c,	0,		0,
 					0,		0,		1,		0,
 					0,		0,		0,		1 );
+}
+
+static HM translateH (V3 v) {
+	return HM::column(	V3(1,0,0),
+						V3(0,1,0),
+						V3(0,0,1),
+						v );
+}
+static HM scaleH (V3 v) {
+	return HM::column(	V3(v.x,0,0),
+						V3(0,v.y,0),
+						V3(0,0,v.z),
+						V3(0,0,0) );
+}
+static HM rotateH_X (T ang) {
+	auto sc = sin_cos(ang);
+	return HM::row(	1,		0,		0,		0,
+					0,		+sc.c,	-sc.s,	0,
+					0,		+sc.s,	+sc.c,	0 );
+}
+static HM rotateH_Y (T ang) {
+	auto sc = sin_cos(ang);
+	return HM::row(	+sc.c,	0,		+sc.s,	0,
+					0,		1,		0,		0,
+					-sc.s,	0,		+sc.c,	0 );
+}
+static HM rotateH_Z (T ang) {
+	auto sc = sin_cos(ang);
+	return HM::row(	+sc.c,	-sc.s,	0,		0,
+					+sc.s,	+sc.c,	0,		0,
+					0,		0,		1,		0 );
+}
+
+static HM transl_rot_scale (V3 t, M3 r, V3 s) {
+	return translateH(t) * HM(r);// * scaleH(s);
 }
 
 #undef T

@@ -18,15 +18,152 @@ typedef fv4		v4;
 typedef fm2		m2;
 typedef fm3		m3;
 typedef fm4		m4;
+typedef fhm		hm;
 
 #define _USING_V110_SDK71_ 1
 #include "glad.c"
 #include "GLFW/glfw3.h"
 
+#if RZ_DEV
+	#define RZ_AUTO_FILE_RELOADING 1
+#else
+	#define RZ_AUTO_FILE_RELOADING 0
+#endif
+
+struct File_Change_Poller {
+	HANDLE		fh;
+	FILETIME	last_change_t;
+	
+	void init (cstr filepath) {
+		fh = CreateFile(filepath, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		dbg_assert(fh != INVALID_HANDLE_VALUE);
+		GetFileTime(fh, NULL, NULL, &last_change_t);
+	}
+	
+	bool poll_did_change () {
+		FILETIME cur_last_change_t;
+		
+		GetFileTime(fh, NULL, NULL, &cur_last_change_t);
+		
+		auto result = CompareFileTime(&last_change_t, &cur_last_change_t);
+		dbg_assert(result == 0 || result == -1);
+		
+		last_change_t = cur_last_change_t;
+		
+		bool did_change = result != 0;
+		if (did_change) {
+			//Sleep(100); // files often are not completely written when the first change get's noticed, so wait for a bit
+		}
+		return did_change;
+	}
+};
+
 #include "platform.hpp"
 #include "gl.hpp"
 #include "mesh_loader.hpp"
 #include "shapes.hpp"
+
+struct Base_Mesh {
+	Mesh_Vbo			vbo; // one vbo per mesh for now
+	Base_Shader*		shad;
+	
+	void init (Base_Shader* shad_) {
+		vbo.gen();
+		shad = shad_;
+	}
+	
+	virtual bool reload_if_needed () = 0;
+	
+};
+
+struct File_Mesh : public Base_Mesh {
+	cstr	filename;
+	v3		pos_world;
+	m3		ori;
+	v3		scale;
+	
+	#if RZ_AUTO_FILE_RELOADING
+	File_Change_Poller	fc;
+	#endif
+	
+	void init_load (Base_Shader* shad_, cstr filename_, v3 pos_world_, m3 ori_=m3::ident(), v3 scale_=1) {
+		Base_Mesh::init(shad_);
+		
+		filename =	filename_;
+		pos_world = pos_world_;
+		ori =		ori_;
+		scale =		scale_;
+		
+		reload();
+		
+		#if RZ_AUTO_FILE_RELOADING
+		std::string filepath = prints("assets_src/meshes/%s", filename);
+		
+		fc.init(filepath.c_str());
+		#endif
+	}
+	
+	void reload () {
+		std::string filepath = prints("assets_src/meshes/%s", filename);
+		
+		load_mesh(&vbo, filepath.c_str(), transl_rot_scale(pos_world, ori, scale));
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {
+		bool reloaded = fc.poll_did_change();
+		if (reloaded) {
+			std::string filepath = prints("assets_src/meshes/%s", filename);
+			
+			printf("mesh source file changed, reloading mesh \"%s\".\n", filepath.c_str());
+			reload();
+		}
+		
+		return reloaded;
+	}
+	
+};
+
+struct Generated_Tile_Floor : public Base_Mesh {
+	void init_load (Base_Shader* shad_) {
+		Base_Mesh::init(shad_);
+		gen_tile_floor(&vbo.vertecies);
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {	return false; }
+};
+
+struct Generated_Tetrahedron : public Base_Mesh {
+	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r) {
+		Base_Mesh::init(shad_);
+		gen_tetrahedron(&vbo.vertecies, pos_world, ori, r);
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {	return false; }
+};
+struct Generated_Cube : public Base_Mesh {
+	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r) {
+		Base_Mesh::init(shad_);
+		gen_cube(&vbo.vertecies, pos_world, ori, r);
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {	return false; }
+};
+struct Generated_Cylinder : public Base_Mesh {
+	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r, f32 l, u32 faces) {
+		Base_Mesh::init(shad_);
+		gen_cylinder(&vbo.vertecies, pos_world, ori, r, l, faces);
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {	return false; }
+};
+struct Generated_Iso_Sphere : public Base_Mesh {
+	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r, u32 wfaces, u32 hfaces) {
+		Base_Mesh::init(shad_);
+		gen_iso_sphere(&vbo.vertecies, pos_world, ori, r, wfaces, hfaces);
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () {	return false; }
+};
 
 //
 static f32			dt = 0;
@@ -140,37 +277,41 @@ int main (int argc, char** argv) {
 	
 	//
 	
-	Shader		shad = {		"test.vert",	"test.frag" };
-	Shader		shad2 = {		"normals.vert",	"normals.frag" };
-	Shader		shad_skybox = {	"skybox.vert",	"skybox.frag" };
+	Shader shad, shad2, shad_skybox;
+	shad		.init_load("test.vert",		"test.frag");
+	shad2		.init_load("normals.vert",	"normals.frag");
+	shad_skybox	.init_load("skybox.vert",	"skybox.frag");
 	
-	shad.init();
-	shad2.init();
-	shad_skybox.init();
+	std::vector<Base_Shader*> shaders = { &shad, &shad2, &shad_skybox };
 	
-	shad.load();
-	shad2.load();
-	shad_skybox.load();
 	
-	Skybox		skybox;
+	Generated_Tile_Floor	mesh_tile_floor;
 	
-	Mesh_Vbo	vbo_shapes;
-	vbo_shapes.gen();
-	Mesh_Vbo	vbo_floor;
-	vbo_floor.gen();
-	Mesh_Vbo	vbo_cerberus;
-	vbo_cerberus.gen();
-	Mesh_Vbo	vbo_pedestal;
-	vbo_pedestal.gen();
-	Mesh_Vbo	vbo_nier;
-	vbo_nier.gen();
-	//Mesh_Vbo	vbo_multi_obj_test;
-	//vbo_multi_obj_test.gen();
+	Generated_Tetrahedron	mesh_tetrahedron;
+	Generated_Cube			mesh_cube;
+	Generated_Cylinder		mesh_cylinder;
+	Generated_Iso_Sphere	mesh_iso_sphere;
 	
-	load_mesh(&vbo_cerberus, "cerberus/cerberus.obj", v3(0,0,2));
-	load_mesh(&vbo_pedestal, "pedestal.obj", v3(5,-1,0));
-	//load_mesh(&vbo_nier, "nier_models_test.obj", v3(8,-4,0));
-	//load_mesh(&vbo_multi_obj_test, "multi_obj_test.obj", v3(8,-4,0));
+	mesh_tile_floor		.init_load(&shad);
+	
+	mesh_tetrahedron	.init_load(&shad, v3(+2,+2,0), rotate3_Z(deg(13)), 1.0f / (1 +1.0f/3));
+	mesh_cube			.init_load(&shad, v3( 0,+2,0), rotate3_Z(deg(37)), 0.5f);
+	mesh_cylinder		.init_load(&shad, v3(-2,+2,0), m3::ident(), 0.5f, 2, 24);
+	mesh_iso_sphere		.init_load(&shad, v3(-3, 0,0), m3::ident(), 0.5f, 64, 32);
+	
+	
+	File_Mesh		mesh_cerberus, mesh_pedestal, mesh_nier, mesh_multi_obj_test;
+	
+	mesh_cerberus		.init_load(&shad2, "cerberus/cerberus.obj",		v3(0,0,1), rotate3_Z(deg(45)));
+	mesh_pedestal		.init_load(&shad2, "pedestal.obj",				v3(3,0,0), rotate3_Z(deg(-70)));
+	mesh_nier			.init_load(&shad2, "nier_models_test.obj",		v3(-4,-2,0), rotate3_Z(deg(90)));
+	mesh_multi_obj_test	.init_load(&shad2, "multi_obj_test.obj",		v3(10,0,0), rotate3_Z(deg(-78)));
+	
+	
+	std::vector<Base_Mesh*> meshes = {
+		&mesh_tile_floor,
+		&mesh_tetrahedron, &mesh_cube, &mesh_cylinder, &mesh_iso_sphere,
+		&mesh_cerberus, &mesh_pedestal, &mesh_nier, &mesh_multi_obj_test };
 	
 	// 
 	f64 prev_t = glfwGetTime();
@@ -194,9 +335,8 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		shad.poll_reload_shader();
-		shad2.poll_reload_shader();
-		shad_skybox.poll_reload_shader();
+		for (auto* s : shaders) s->reload_if_needed();
+		for (auto* m : meshes) m->reload_if_needed();
 		
 		iv2 wnd_dim;
 		v2	wnd_dim_aspect;
@@ -276,15 +416,24 @@ int main (int argc, char** argv) {
 		
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
+		shad.bind();
+		shad			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad2.bind();
+		shad2			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad_skybox.bind();
+		shad_skybox		.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		
 		if (1) { // draw skybox
 			glDisable(GL_DEPTH_TEST);
 			
 			shad_skybox.bind();
-			shad_skybox.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
 			shad_skybox.skybox_to_clip.set(skybox_to_clip);
 			//shad_skybox.tex_skybox.bind();
 			
-			skybox.draw();
+			// Coordinates generated in vertex shader
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+			glDrawArrays(GL_TRIANGLES, 0, 6*6);
 			
 			glEnable(GL_DEPTH_TEST);
 		} else { // draw clear color
@@ -294,38 +443,9 @@ int main (int argc, char** argv) {
 		}
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
-		{ // Draw all
-			vbo_shapes.clear();
-			gen_shapes(&vbo_shapes.vertecies);
-			
-			vbo_floor.clear();
-			gen_grid_floor(&vbo_floor.vertecies);
-			
-			
-			shad.bind();
-			shad.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-			
-			vbo_shapes.upload();
-			vbo_shapes.draw_all(shad);
-			
-			vbo_floor.upload();
-			vbo_floor.draw_all(shad);
-			
-			
-			shad2.bind();
-			shad2.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-			
-			vbo_cerberus.upload();
-			vbo_cerberus.draw_all(shad2);
-			
-			vbo_pedestal.upload();
-			vbo_pedestal.draw_all(shad2);
-			
-			vbo_nier.upload();
-			vbo_nier.draw_all(shad2);
-			
-			//vbo_multi_obj_test.upload();
-			//vbo_multi_obj_test.draw_all(shad2);
+		for (auto* m : meshes) {
+			m->shad->bind();
+			m->vbo.draw_entire(m->shad);
 		}
 		
 		glfwSwapBuffers(wnd);

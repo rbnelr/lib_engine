@@ -154,44 +154,33 @@ struct Uniform_V2 : public Base_Uniform {
 struct Base_Shader {
 	GLuint		gl_prog;
 	
-	cstr		vert_name;
-	cstr		frag_name;
+	cstr		vert_filename;
+	cstr		frag_filename;
 	
-	#if RZ_DBG
-	HANDLE		_vert_h;
-	HANDLE		_frag_h;
-	
-	FILETIME	_vert_t;
-	FILETIME	_frag_t;
+	#if RZ_AUTO_FILE_RELOADING
+	File_Change_Poller	fc_vert;
+	File_Change_Poller	fc_frag;
 	#endif
 	
-	Base_Shader (cstr v, cstr f): gl_prog{0}, vert_name{v}, frag_name{f} {}
-	
-	void init () {
-		#if RZ_DBG
-		std::string vert_filepath = prints("shaders/%s", vert_name);
-		std::string frag_filepath = prints("shaders/%s", frag_name);
+	void init_load (cstr vert_filename_, cstr frag_filename_) {
+		vert_filename = vert_filename_;
+		frag_filename = frag_filename_;
 		
-		{
-			_vert_h = CreateFile(vert_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			dbg_assert(_vert_h != INVALID_HANDLE_VALUE);
-			GetFileTime(_vert_h, NULL, NULL, &_vert_t);
-		}
-		{
-			_frag_h = CreateFile(frag_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-			dbg_assert(_frag_h != INVALID_HANDLE_VALUE);
-			GetFileTime(_frag_h, NULL, NULL, &_frag_t);
-		}
+		_load(&gl_prog);
+		
+		#if RZ_AUTO_FILE_RELOADING
+		std::string vert_filepath = prints("shaders/%s", vert_filename);
+		std::string frag_filepath = prints("shaders/%s", frag_filename);
+		
+		fc_vert.init(vert_filepath.c_str());
+		fc_frag.init(frag_filepath.c_str());
 		#endif
 	}
 	bool _load (GLuint* out) {
-		std::string vert_filepath = prints("shaders/%s", vert_name);
-		std::string frag_filepath = prints("shaders/%s", frag_name);
+		std::string vert_filepath = prints("shaders/%s", vert_filename);
+		std::string frag_filepath = prints("shaders/%s", frag_filename);
 		
 		return load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
-	}
-	void load () {
-		_load(&gl_prog);
 	}
 	bool try_reload () {
 		GLuint tmp;
@@ -202,27 +191,14 @@ struct Base_Shader {
 		}
 		return success;
 	}
-	bool poll_reload_shader () {
-		#if RZ_DBG
-		std::string vert_filepath = prints("shaders/%s", vert_name);
-		std::string frag_filepath = prints("shaders/%s", frag_name);
+	bool reload_if_needed () {
+		#if RZ_AUTO_FILE_RELOADING
 		
-		FILETIME vt, ft;
-		
-		GetFileTime(_vert_h, NULL, NULL, &vt);
-		GetFileTime(_frag_h, NULL, NULL, &ft);
-		
-		auto vr = CompareFileTime(&_vert_t, &vt);
-		auto fr = CompareFileTime(&_frag_t, &ft);
-		
-		bool reloaded = vr != 0 || fr != 0;
-		dbg_assert(vr == 0 || vr == -1);
-		dbg_assert(fr == 0 || fr == -1);
-		
-		_vert_t = vt;
-		_frag_t = ft;
-		
+		bool reloaded = fc_vert.poll_did_change() || fc_frag.poll_did_change();
 		if (reloaded) {
+			std::string vert_filepath = prints("shaders/%s", vert_filename);
+			std::string frag_filepath = prints("shaders/%s", frag_filename);
+			
 			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filepath.c_str(), frag_filepath.c_str());
 			reloaded = try_reload();
 		}
@@ -238,8 +214,6 @@ struct Base_Shader {
 };
 
 struct Shader : public Base_Shader {
-	Shader (cstr v, cstr f): Base_Shader{v,f} {}
-	
 	struct Common_Uniforms {
 		Uniform_M4		world_to_clip;
 		Uniform_V2		mcursor_pos;
@@ -254,8 +228,8 @@ struct Shader : public Base_Shader {
 	
 	Uniform_M4			skybox_to_clip;
 	
-	void load () {
-		Base_Shader::load();
+	void init_load (cstr v, cstr f) {
+		Base_Shader::init_load(v, f);
 		
 		common.world_to_clip.get_loc(gl_prog, "world_to_clip");
 		common.mcursor_pos.get_loc(gl_prog, "mcursor_pos");
@@ -310,23 +284,23 @@ struct Mesh_Vbo {
 		}
 	}
 	
-	void bind (Base_Shader shad) {
+	void bind (Base_Shader const* shad) {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
-		GLint pos =		glGetAttribLocation(shad.gl_prog, "pos_world");
+		GLint pos =		glGetAttribLocation(shad->gl_prog, "pos_world");
 		glEnableVertexAttribArray(pos);
 		glVertexAttribPointer(pos,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, pos));
 		
-		GLint norm =	glGetAttribLocation(shad.gl_prog, "norm_world");
+		GLint norm =	glGetAttribLocation(shad->gl_prog, "norm_world");
 		glEnableVertexAttribArray(norm);
 		glVertexAttribPointer(norm,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, norm));
 		
-		GLint uv =		glGetAttribLocation(shad.gl_prog, "uv");
+		GLint uv =		glGetAttribLocation(shad->gl_prog, "uv");
 		glEnableVertexAttribArray(uv);
 		glVertexAttribPointer(uv,	2, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, uv));
 		
-		GLint col =		glGetAttribLocation(shad.gl_prog, "col");
+		GLint col =		glGetAttribLocation(shad->gl_prog, "col");
 		glEnableVertexAttribArray(col);
 		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
 		
@@ -337,7 +311,7 @@ struct Mesh_Vbo {
 		}
 	}
 	
-	void draw_all (Base_Shader shad) {
+	void draw_entire (Base_Shader const* shad) {
 		bind(shad);
 		
 		if (indices.size()) {
@@ -345,15 +319,5 @@ struct Mesh_Vbo {
 		} else {
 			glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
 		}
-	}
-};
-
-struct Skybox {
-	
-	
-	void draw () {
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-		glDrawArrays(GL_TRIANGLES, 0, 6*6);
 	}
 };

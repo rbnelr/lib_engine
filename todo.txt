@@ -24,21 +24,40 @@ DONE:
  -write a nice looking skybox generator shader (try to look like a sky)
   -sky/ground/horizon_fog with fog slider
  
+#2017.11.25 so. tag
+ implement cubemap skybox instead of clear color
+ -write a nice looking skybox generator shader (try to look like a sky)
+  -added sun
+ 
+ allow loading of multiple 'objects' in one .obj file
+ -simply merge their meshes for now
+ 
+ using inheritance now to allow one array of pointers to all shaders/meshes etc. while allowing those to by different in some ways via virtual functions
+ -> might try to switch to tagged unions later
+ 
+ reimplement generated meshes -> have radius, number of faces, etc. be a variable
+ -one derived struct for each shape (or tagged union)
+ -trigger reuploads on changes of these variables
+ 
 TODO
 -FEATURES:
  
- implement shader loading
- -probably will need $include command in shader
+ make fullscreen toggle switch to fullscreen on the main monitor the window is on
  
- implement cubemap skybox instead of clear color
- -write a nice looking skybox generator shader (try to look like a sky)
-  -add sun
+ debug text rendering (dbg_text_line() emits a line which starts at the bottom and goes )
  
  simple way of doing dynamic tweak variables
  -overlayed text editor to allow tweaking in fullscreen
   -> might easaly become easier to use and more flexible than external text format
  
+ implement shader loading
+ -probably will need $include command in shader
+ 
+ tagged union instead of inheritance?
+ 
 -BUGS:
+ shader reloading sometimes broken?
+ 
  stuck wasd/space/ctrl movement sometimes
  -find reproducible case and log events i recieve
  

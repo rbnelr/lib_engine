@@ -55,9 +55,10 @@
 	set func=vs
 	if not [%1] == []		set func=%1
 	
-	set release=0
-	if [%2] == [dbg]		set release=0
-	if [%2] == [release]	set release=1
+	set mode=dbg
+	if [%2] == [dbg]		set mode=dbg
+	if [%2] == [opt]		set mode=opt
+	if [%2] == [release]	set mode=release
 	
 	set proj=engine
 	if not [%3] == []		set proj=%3
@@ -76,10 +77,12 @@ rem /main
 :vs
 	del !ROOT!!proj!.exe
 	
-	if [!release!] == [0] (
-		set dbg=/Od /EHsc /Ob1 /MDd /Zi /DRZ_DBG=1
-	) else  (
-		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0
+	if [!mode!] == [dbg] (
+		set dbg=/Od /EHsc /Ob1 /MDd /Zi /DRZ_DBG=1 /DRZ_DEV=1
+	) else if [!mode!] == [opt] (
+		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=1
+	) else if [!mode!] == [dbg] (
+		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=0
 	)
 	
 	set opt=!dbg! /fp:fast /GS-

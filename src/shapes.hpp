@@ -1,5 +1,5 @@
 
-static void gen_tetrahedron (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world, m3 ori) {
+static void gen_tetrahedron (std::vector<Mesh_Vertex>* data, v3 pos_world, m3 ori, f32 r) {
 	
 	pos_world += v3(0,0, r * (1.0f/3));
 	
@@ -30,7 +30,7 @@ static void gen_tetrahedron (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world
 	
 	dbg_assert(out == data->end()); // check size calculation above
 }
-static void gen_cube (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world, m3 ori) {
+static void gen_cube (std::vector<Mesh_Vertex>* data, v3 pos_world, m3 ori, f32 r) {
 	
 	pos_world += v3(0,0,r);
 	
@@ -86,7 +86,7 @@ static void gen_cube (std::vector<Mesh_Vertex>* data, f32 r, v3 pos_world, m3 or
 	
 	dbg_assert(out == data->end()); // check size calculation above
 }
-static void gen_cylinder (std::vector<Mesh_Vertex>* data, f32 r, f32 l, u32 faces, v3 pos_world) {
+static void gen_cylinder (std::vector<Mesh_Vertex>* data, v3 pos_world, m3 ori, f32 r, f32 l, u32 faces) {
 	
 	pos_world += v3(0,0,l/2);
 	
@@ -124,7 +124,7 @@ static void gen_cylinder (std::vector<Mesh_Vertex>* data, f32 r, f32 l, u32 face
 	
 	dbg_assert(out == data->end()); // check size calculation above
 }
-static void gen_iso_shphere (std::vector<Mesh_Vertex>* data, f32 r, u32 wfaces, u32 hfaces, v3 pos_world) {
+static void gen_iso_sphere (std::vector<Mesh_Vertex>* data, v3 pos_world, m3 ori, f32 r, u32 wfaces, u32 hfaces) {
 	
 	if (wfaces < 2 || hfaces < 2) return;
 	
@@ -175,27 +175,17 @@ static void gen_iso_shphere (std::vector<Mesh_Vertex>* data, f32 r, u32 wfaces, 
 	dbg_assert(out == data->end()); // check size calculation above
 }
 
-static void gen_shapes (std::vector<Mesh_Vertex>* data) {
-	gen_cube(data,			1,						v3( 0,+4,0), rotate3_Z(deg(37)));
-	gen_tetrahedron(data,	2.0f / (1 +1.0f/3),		v3(+4,+4,0), rotate3_Z(deg(13)));
-	gen_cylinder(data,		1, 2, 24, 				v3(-4,+4,0));
-	gen_iso_shphere(data,	1, 64, 32,				v3(-4, 0,0));
-}
-
-static void gen_grid_floor (std::vector<Mesh_Vertex>* data) {
+static void gen_tile_floor (std::vector<Mesh_Vertex>* data) {
 	
 	f32	Z = 0;
 	f32	tile_dim = 1;
-	iv2	floor_r = 16;
+	iv2	floor_r = 20;
 	
-	auto out = vector_append(data, floor_r.y*2 * floor_r.x*2 * 6);
+	auto out = vector_append(data, (floor_r.y*2 * floor_r.x*2 * 6) / 2);
 	
-	auto emit_quad = [&] (v3 pos, bool color) {
-		if (color) {
-			for (ui i=0; i<6; ++i)
-				*out++ = { QNAN, MESH_DEFAULT_NORM, MESH_DEFAULT_UV, QNAN };
-		} else {
-			v3 col = color ? srgb(224,226,228) : srgb(41,49,52);
+	auto emit_quad = [&] (v3 pos, bool checker) {
+		if (checker) {
+			v3 col = 0 ? srgb(224,226,228) : srgb(41,49,52);
 			*out++ = { pos +v3(+0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
 			*out++ = { pos +v3(+0.5f,+0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };
 			*out++ = { pos +v3(-0.5f,-0.5f,0), MESH_DEFAULT_NORM, MESH_DEFAULT_UV, col };

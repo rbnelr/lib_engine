@@ -123,9 +123,7 @@ namespace std {
 	};
 }
 
-static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
-	
-	std::string filepath = prints("assets_src/meshes/%s", name);
+static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 	
 	struct Vert_Indecies {
 		u32		pos;
@@ -148,8 +146,8 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 	
 	{ // load data from 
 		std::string file;
-		if (!read_text_file(filepath.c_str(), &file)) {
-			dbg_assert(false, "Mesh file \"%s\" not found!", filepath.c_str());
+		if (!read_text_file(filepath, &file)) {
+			dbg_assert(false, "Mesh file \"%s\" not found!", filepath);
 			return;
 		}
 		
@@ -218,21 +216,22 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 				
 				whitespace(&cur);
 				
-				bool pos = int_(&cur, &vert[i].pos);
+				bool pos, uv, norm;
+				
+				pos = int_(&cur, &vert[i].pos);
 				if (!pos || vert[i].pos == 0) goto error; // position missing
 				
 				if (*cur == '/') { ++cur;
-					bool uv = int_(&cur, &vert[i].uv);
+					uv = int_(&cur, &vert[i].uv);
 					if (uv && vert[i].uv == 0) goto error; // out of range index
 					
 					if (*cur++ != '/') goto error;
 					
-					bool norm = int_(&cur, &vert[i].norm);
+					norm = int_(&cur, &vert[i].norm);
 					if (norm && vert[i].norm == 0) goto error; // out of range index
-				} else {
-					vert[i].uv = 0;
-					vert[i].norm = 0;
 				}
+				if (!uv)	vert[i].uv = 0;
+				if (!norm)	vert[i].norm = 0;
 				
 				++i;
 				if (newline(&cur) || *cur == '\0') break;
@@ -255,7 +254,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 			return;
 			
 			error: {
-				log_warning("load_mesh: \"%s\" Error in face parsing, setting to 0!", filepath.c_str());
+				log_warning("load_mesh: \"%s\" Error in face parsing, setting to 0!", filepath);
 				tris.push_back({});
 			}
 		};
@@ -264,7 +263,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 			
 			auto tok = token(&cur);
 			if (!tok) {
-				log_warning("load_mesh: \"%s\" Missing line token, ignoring line!", filepath.c_str());
+				log_warning("load_mesh: \"%s\" Missing line token, ignoring line!", filepath);
 				rest_of_line(&cur); // skip line
 				
 			} else {
@@ -283,11 +282,6 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 				else if (	comp(tok, "o") ) {
 					whitespace(&cur);
 					
-					if (obj_name) {
-						dbg_assert(false, "load_mesh: \"%s\" More than 1 object in file, not supported!");
-						return;
-					}
-					
 					obj_name = rest_of_line(&cur);
 					newline(&cur);
 				}
@@ -298,7 +292,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 					ignore_line();
 				}
 				else {
-					log_warning("load_mesh: \"%s\" Unknown line token \"%.*s\", ignoring line!", filepath.c_str(), tok.len,tok.ptr);
+					log_warning("load_mesh: \"%s\" Unknown line token \"%.*s\", ignoring line!", filepath, tok.len,tok.ptr);
 					ignore_line();
 				}
 			}
@@ -320,7 +314,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr name, v3 pos_offs=0) {
 			for (ui i=0; i<3; ++i) {
 				Mesh_Vertex v;
 				
-				v.pos =		poss[t.arr[i].pos -1] +pos_offs;
+				v.pos =		transform * poss[t.arr[i].pos -1];
 				v.norm =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: MESH_DEFAULT_NORM;
 				v.uv =		t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: MESH_DEFAULT_UV;
 				v.col =		MESH_DEFAULT_COL;
