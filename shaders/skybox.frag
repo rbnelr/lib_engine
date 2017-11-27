@@ -39,6 +39,14 @@ mat3 rotate3_Z (float ang) {
 					0,	0,	1 );
 }
 
+/*
+vec3 hash3( vec2 p ) {
+    vec3 q = vec3( dot(p,vec2(127.1,311.7)), 
+                   dot(p,vec2(269.5,183.3)), 
+                   dot(p,vec2(419.2,371.9)) );
+    return fract(sin(q)*43758.5453);
+}*/
+
 vec3 sky (vec3 dir_world) {
 	if (false) {
 		return dir_world * 0.5 +0.5;
@@ -57,7 +65,10 @@ vec3 sky (vec3 dir_world) {
 		//fog_color *= 0.015;
 		//ground_color *= 0.025;
 		
+		//if (hash3(dir_world.xy).x > 0.995) sky_color += vec3(1);
+		
 		vec2 sun_ae = vec2(deg(-25), deg(40));
+		//vec2 sun_ae = vec2(deg(-25), deg(-40));
 		
 		vec3 sun_dir = rotate3_Z(sun_ae.x) * rotate3_X(sun_ae.y) * vec3(0,1,0);
 		vec3 sun_color = vec3(1,0.9,0.4) * 1;

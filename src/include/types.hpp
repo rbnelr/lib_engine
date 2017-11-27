@@ -40,8 +40,6 @@ typedef char const*			cstr;
 typedef char				utf8;
 typedef char32_t			utf32;
 
-#define cr const&
-
 ////
 
 #if 0

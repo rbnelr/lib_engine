@@ -12,6 +12,9 @@
 typedef s32v2	iv2;
 typedef s32v3	iv3;
 typedef s32v4	iv4;
+typedef u32v2	uv2;
+typedef u32v3	uv3;
+typedef u32v4	uv4;
 typedef fv2		v2;
 typedef fv3		v3;
 typedef fv4		v4;
@@ -34,13 +37,17 @@ struct File_Change_Poller {
 	HANDLE		fh;
 	FILETIME	last_change_t;
 	
-	void init (cstr filepath) {
+	bool init (cstr filepath) {
 		fh = CreateFile(filepath, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		dbg_assert(fh != INVALID_HANDLE_VALUE);
-		GetFileTime(fh, NULL, NULL, &last_change_t);
+		if (fh != INVALID_HANDLE_VALUE) {
+			GetFileTime(fh, NULL, NULL, &last_change_t);
+		}
+		return fh != INVALID_HANDLE_VALUE;
 	}
 	
-	bool poll_did_change () {
+	bool poll_did_change (cstr filepath) {
+		if (fh == INVALID_HANDLE_VALUE) return init(filepath); // contiously try to open the file so we can 'reload' it if it becomes available
+		
 		FILETIME cur_last_change_t;
 		
 		GetFileTime(fh, NULL, NULL, &cur_last_change_t);
@@ -52,11 +59,15 @@ struct File_Change_Poller {
 		
 		bool did_change = result != 0;
 		if (did_change) {
-			//Sleep(100); // files often are not completely written when the first change get's noticed, so wait for a bit
+			//Sleep(5); // files often are not completely written when the first change get's noticed, so we might want to wait for a bit
 		}
 		return did_change;
 	}
 };
+
+static void log_warning_asset_load (cstr asset, cstr reason="") {
+	log_warning("\"%s\" could not be loaded!%s", asset, reason);
+}
 
 #include "platform.hpp"
 #include "gl.hpp"
@@ -68,7 +79,7 @@ struct Base_Mesh {
 	Base_Shader*		shad;
 	
 	void init (Base_Shader* shad_) {
-		vbo.gen();
+		vbo.init();
 		shad = shad_;
 	}
 	
@@ -98,27 +109,32 @@ struct File_Mesh : public Base_Mesh {
 		
 		#if RZ_AUTO_FILE_RELOADING
 		std::string filepath = prints("assets_src/meshes/%s", filename);
-		
 		fc.init(filepath.c_str());
 		#endif
 	}
 	
 	void reload () {
-		std::string filepath = prints("assets_src/meshes/%s", filename);
+		vbo.clear();
+		
+		auto filepath = prints("assets_src/meshes/%s", filename);
 		
 		load_mesh(&vbo, filepath.c_str(), transl_rot_scale(pos_world, ori, scale));
 		vbo.upload();
 	}
 	virtual bool reload_if_needed () {
-		bool reloaded = fc.poll_did_change();
+		#if RZ_AUTO_FILE_RELOADING
+		auto filepath = prints("assets_src/meshes/%s", filename);
+		
+		bool reloaded = fc.poll_did_change(filepath.c_str());
 		if (reloaded) {
-			std::string filepath = prints("assets_src/meshes/%s", filename);
-			
 			printf("mesh source file changed, reloading mesh \"%s\".\n", filepath.c_str());
 			reload();
 		}
 		
 		return reloaded;
+		#else
+		return false;
+		#endif
 	}
 	
 };
@@ -168,13 +184,28 @@ struct Generated_Iso_Sphere : public Base_Mesh {
 //
 static f32			dt = 0;
 
+struct Input {
+	v2		mouse_look_diff =	0;
+	
+	iv3		move_dir =			0;
+	bool	move_fast =			false;
+};
+static Input		inp;
+
 struct Camera {
-	v3 pos_world;
-	v2 ori_ae; // azimuth elevation
+	v3	pos_world;
+	v2	ori_ae; // azimuth elevation
+	
+	f32	fly_vel;
+	f32	fly_vel_fast_mul;
+	f32	vfov;
 };
 
 static Camera default_camera = {	v3(0, -5, 1),
-									v2(deg(0), deg(+80)) };
+									v2(deg(0), deg(+80)),
+									4,
+									4,
+									deg(70) };
 
 static Camera		cam;
 
@@ -216,14 +247,16 @@ static void glfw_key_event (GLFWwindow* window, int key, int scancode, int actio
 				case GLFW_KEY_F11:			if (went_down) {		toggle_fullscreen(); }	break;
 				
 				//
-				case GLFW_KEY_A:			inp.cam_dir.x -= went_down ? +1 : -1;		break;
-				case GLFW_KEY_D:			inp.cam_dir.x += went_down ? +1 : -1;		break;
+				case GLFW_KEY_A:			inp.move_dir.x -= went_down ? +1 : -1;		break;
+				case GLFW_KEY_D:			inp.move_dir.x += went_down ? +1 : -1;		break;
 				
-				case GLFW_KEY_S:			inp.cam_dir.z += went_down ? +1 : -1;		break;
-				case GLFW_KEY_W:			inp.cam_dir.z -= went_down ? +1 : -1;		break;
+				case GLFW_KEY_S:			inp.move_dir.z += went_down ? +1 : -1;		break;
+				case GLFW_KEY_W:			inp.move_dir.z -= went_down ? +1 : -1;		break;
 				
-				case GLFW_KEY_LEFT_CONTROL:	inp.cam_dir.y -= went_down ? +1 : -1;		break;
-				case GLFW_KEY_SPACE:		inp.cam_dir.y += went_down ? +1 : -1;		break;
+				case GLFW_KEY_LEFT_CONTROL:	inp.move_dir.y -= went_down ? +1 : -1;		break;
+				case GLFW_KEY_SPACE:		inp.move_dir.y += went_down ? +1 : -1;		break;
+				
+				case GLFW_KEY_LEFT_SHIFT:	inp.move_fast = went_down;					break;
 			}
 		} else {
 			switch (key) {
@@ -247,6 +280,21 @@ static void glfw_mouse_button_event (GLFWwindow* window, int button, int action,
 			}
 			break;
 	}
+}
+static void glfw_mouse_scroll (GLFWwindow* window, double xoffset, double yoffset) {
+	if (inp.move_fast) {
+		f32 delta_log = 0.1f * (f32)yoffset;
+		cam.fly_vel = pow( 2, log2(cam.fly_vel) +delta_log );
+		printf(">>> fly_vel: %f\n", cam.fly_vel);
+	} else {
+		f32 delta_log = -0.1f * (f32)yoffset;
+		f32 vfov = pow( 2, log2(cam.vfov) +delta_log );
+		if (vfov >= deg(1.0f/10) && vfov <= deg(170)) cam.vfov = vfov;
+	}
+}
+static void glfw_cursor_move_relative (GLFWwindow* window, double dx, double dy) {
+	v2 diff = v2((f32)dx,(f32)dy);
+	inp.mouse_look_diff += diff;
 }
 
 int main (int argc, char** argv) {
@@ -277,41 +325,47 @@ int main (int argc, char** argv) {
 	
 	//
 	
-	Shader shad, shad2, shad_skybox;
-	shad		.init_load("test.vert",		"test.frag");
-	shad2		.init_load("normals.vert",	"normals.frag");
-	shad_skybox	.init_load("skybox.vert",	"skybox.frag");
+	Shader		shad, shad2, shad_skybox;
+	Shader_Tex	shad_diffuse, shad_overlay_tex;
+	shad				.init_load("test.vert",			"test.frag");
+	shad2				.init_load("normals.vert",		"normals.frag");
+	shad_skybox			.init_load("skybox.vert",		"skybox.frag");
+	shad_diffuse		.init_load("diffuse.vert",		"diffuse.frag");
+	shad_overlay_tex	.init_load("overlay_tex.vert",	"overlay_tex.frag");
 	
-	std::vector<Base_Shader*> shaders = { &shad, &shad2, &shad_skybox };
+	std::vector<Base_Shader*> shaders = { &shad, &shad2, &shad_skybox, &shad_diffuse, &shad_overlay_tex };
 	
+	Texture2D	tex_test, tex_cerberus_diffuse;
+	tex_test				.init_load("test.png");
+	tex_cerberus_diffuse	.init_load("cerberus/Cerberus_A.tga");
+	
+	std::vector<Texture2D*>	textures = { &tex_test, &tex_cerberus_diffuse };
 	
 	Generated_Tile_Floor	mesh_tile_floor;
-	
 	Generated_Tetrahedron	mesh_tetrahedron;
 	Generated_Cube			mesh_cube;
 	Generated_Cylinder		mesh_cylinder;
 	Generated_Iso_Sphere	mesh_iso_sphere;
-	
 	mesh_tile_floor		.init_load(&shad);
-	
 	mesh_tetrahedron	.init_load(&shad, v3(+2,+2,0), rotate3_Z(deg(13)), 1.0f / (1 +1.0f/3));
 	mesh_cube			.init_load(&shad, v3( 0,+2,0), rotate3_Z(deg(37)), 0.5f);
 	mesh_cylinder		.init_load(&shad, v3(-2,+2,0), m3::ident(), 0.5f, 2, 24);
 	mesh_iso_sphere		.init_load(&shad, v3(-3, 0,0), m3::ident(), 0.5f, 64, 32);
 	
 	
-	File_Mesh		mesh_cerberus, mesh_pedestal, mesh_nier, mesh_multi_obj_test;
-	
-	mesh_cerberus		.init_load(&shad2, "cerberus/cerberus.obj",		v3(0,0,1), rotate3_Z(deg(45)));
-	mesh_pedestal		.init_load(&shad2, "pedestal.obj",				v3(3,0,0), rotate3_Z(deg(-70)));
-	mesh_nier			.init_load(&shad2, "nier_models_test.obj",		v3(-4,-2,0), rotate3_Z(deg(90)));
-	mesh_multi_obj_test	.init_load(&shad2, "multi_obj_test.obj",		v3(10,0,0), rotate3_Z(deg(-78)));
+	File_Mesh		mesh_pedestal, mesh_multi_obj_test, mesh_cerberus, mesh_nier;
+	mesh_pedestal		.init_load(&shad2, "pedestal.obj",				v3(3,0,0),		rotate3_Z(deg(-70)));
+	mesh_cerberus		.init_load(&shad_diffuse, "cerberus/cerberus.obj",		v3(0,0,1),		rotate3_Z(deg(45)));
+	mesh_multi_obj_test	.init_load(&shad2, "multi_obj_test.obj",		v3(10,0,0),		rotate3_Z(deg(-78)));
+	mesh_nier			.init_load(&shad2, "nier_models_test.obj",		v3(-4,-2,0),	rotate3_Z(deg(90)));
 	
 	
 	std::vector<Base_Mesh*> meshes = {
 		&mesh_tile_floor,
 		&mesh_tetrahedron, &mesh_cube, &mesh_cylinder, &mesh_iso_sphere,
-		&mesh_cerberus, &mesh_pedestal, &mesh_nier, &mesh_multi_obj_test };
+		&mesh_pedestal, &mesh_multi_obj_test, &mesh_cerberus, &mesh_nier
+		//&mesh_pedestal, &mesh_multi_obj_test, &mesh_cerberus
+	};
 	
 	// 
 	f64 prev_t = glfwGetTime();
@@ -335,8 +389,9 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		for (auto* s : shaders) s->reload_if_needed();
-		for (auto* m : meshes) m->reload_if_needed();
+		for (auto* s : shaders)		s->reload_if_needed();
+		for (auto* m : meshes)		m->reload_if_needed();
+		for (auto* t : textures)	t->reload_if_needed();
 		
 		iv2 wnd_dim;
 		v2	wnd_dim_aspect;
@@ -366,7 +421,7 @@ int main (int argc, char** argv) {
 		m4 skybox_to_clip;
 		{
 			{
-				v2 mouse_look_sens = v2(deg(1.0f / 8));
+				v2 mouse_look_sens = v2(deg(1.0f / 8)) * (cam.vfov / deg(70));
 				cam.ori_ae -= mouse_look_diff * mouse_look_sens;
 				cam.ori_ae.x = mymod(cam.ori_ae.x, deg(360));
 				cam.ori_ae.y = clamp(cam.ori_ae.y, deg(2), deg(180.0f -2));
@@ -377,9 +432,12 @@ int main (int argc, char** argv) {
 			m3 cam_to_world_rot = rotate3_Z(cam.ori_ae.x) * rotate3_X(cam.ori_ae.y);
 			
 			{
-				v3 cam_vel = 4*v3(1,2.0f/3,1);
+				f32 cam_vel_forw = cam.fly_vel;
+				if (inp.move_fast) cam_vel_forw *= cam.fly_vel_fast_mul;
 				
-				v3 cam_vel_cam = normalize_or_zero( (v3)inp.cam_dir ) * cam_vel;
+				v3 cam_vel = cam_vel_forw * v3(1,2.0f/3,1);
+				
+				v3 cam_vel_cam = normalize_or_zero( (v3)inp.move_dir ) * cam_vel;
 				cam.pos_world += (cam_to_world_rot * cam_vel_cam) * dt;
 				
 				//printf(">>> %f %f %f\n", cam_vel_cam.x, cam_vel_cam.y, cam_vel_cam.z);
@@ -388,7 +446,7 @@ int main (int argc, char** argv) {
 			
 			m4 cam_to_clip;
 			{
-				f32 vfov =			deg(1 ? 70 : 90);
+				f32 vfov =			cam.vfov;
 				f32 clip_near =		1.0f/16;
 				f32 clip_far =		512;
 				
@@ -417,11 +475,17 @@ int main (int argc, char** argv) {
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
 		shad.bind();
-		shad			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad				.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
 		shad2.bind();
-		shad2			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad2				.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
 		shad_skybox.bind();
-		shad_skybox		.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad_skybox			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad_diffuse.bind();
+		shad_diffuse		.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		shad_overlay_tex.bind();
+		shad_overlay_tex	.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
+		
+		shad_diffuse.tex0.bind(tex_cerberus_diffuse);
 		
 		if (1) { // draw skybox
 			glDisable(GL_DEPTH_TEST);
@@ -447,6 +511,11 @@ int main (int argc, char** argv) {
 			m->shad->bind();
 			m->vbo.draw_entire(m->shad);
 		}
+		
+		shad_overlay_tex.bind();
+		shad_overlay_tex.tex_dim.set( (v2)tex_test.dim );
+		shad_overlay_tex.tex0.bind( tex_test );
+		glDrawArrays(GL_TRIANGLES, 0, 6);
 		
 		glfwSwapBuffers(wnd);
 		

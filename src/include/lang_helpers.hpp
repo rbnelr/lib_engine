@@ -173,7 +173,7 @@ template <typename T> static typename std::vector<T>::iterator vector_append (st
 	return vec->begin() +old_len;
 }
 
-template <typename T> static uptr vector_size_bytes (std::vector<T> cr vec) {
+template <typename T> static uptr vector_size_bytes (std::vector<T> const& vec) {
 	return vec.size() * sizeof(T);
 }
 

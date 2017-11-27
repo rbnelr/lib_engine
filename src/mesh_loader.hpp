@@ -1,4 +1,103 @@
 
+#define BEGIN(name)			auto _##__COUNTER__##name##_begin = glfwGetTime()
+#define END(name) do {\
+			f64 dt = glfwGetTime() -_##__COUNTER__##name##_begin; \
+			_##name##_dt += dt; \
+			++_atof_count; \
+			_atof_min = min(_atof_min, dt); \
+			_atof_max = max(_atof_max, dt); \
+		} while (0)
+
+#define PROFILE_ATOF 0
+#define OVERRIDE_ATOF 1 // atof is EXTREMELY SLOW on some machines/compilers (2 ms!! in some cases)
+#define CHECK_MY_ATOF 0 // my_str_to_f32 is 100% identical with atof for my dataset (and about 70000 times as fast as gcc's atof)
+
+#if PROFILE_ATOF
+f64 _atof_dt;
+u32 _atof_count;
+f64 _atof_min;
+f64 _atof_max;
+u64 _rdtsc;
+#endif
+
+#if CHECK_MY_ATOF
+u32 atof_equal;
+u32 atof_not_equal;
+#endif
+
+#if OVERRIDE_ATOF
+static f32 my_str_to_f32 (cstr str) {
+	#if 1
+	f64 sign = *str == '-' ? -1.0 : +1.0;
+	if (*str == '-' || *str == '+') ++str;
+	
+	u64 i = 0;
+	for (;;) {
+		dbg_assert(*str >= '0' && *str <= '9');
+		u64 digit = *str++ -'0';
+		
+		i *= 10;
+		i += digit;
+		
+		if (*str < '0' || *str > '9') break;
+	}
+	
+	f64 f = 0;
+	
+	if (*str == '.') {
+		++str;
+		
+		f64 g = 0.1;
+		for (;;) {
+			dbg_assert(*str >= '0' && *str <= '9');
+			u64 digit = *str++ -'0';
+			
+			f += g * (f64)digit;
+			
+			if (*str < '0' || *str > '9') break;
+			
+			g *= 0.1;
+			
+		}
+	}
+	return (f32)(sign * ((f64)i +f));
+	#else // Probably the better implementation
+	f64 sign = *str == '-' ? -1.0 : +1.0;
+	if (*str == '-' || *str == '+') ++str;
+	
+	u64 i = 0;
+	for (;;) {
+		dbg_assert(*str >= '0' && *str <= '9');
+		u64 digit = *str++ -'0';
+		
+		i *= 10;
+		i += digit;
+		
+		if (*str < '0' || *str > '9') break;
+	}
+	
+	f64 frac_multi = 1.0;
+	if (*str == '.') {
+		++str;
+		
+		for (;;) {
+			dbg_assert(*str >= '0' && *str <= '9');
+			u64 digit = *str++ -'0';
+			
+			i *= 10;
+			i += digit;
+			
+			frac_multi *= 0.1;
+			
+			if (*str < '0' || *str > '9') break;
+		}
+	}
+	
+	return (f32)(sign * (f64)i * frac_multi);
+	#endif
+}
+#endif
+
 namespace parse {
 	struct str {
 		char*	ptr;
@@ -7,7 +106,7 @@ namespace parse {
 		operator bool () { return ptr; }
 	};
 	
-	static bool comp (str cr l, cstr r) {
+	static bool comp (str const& l, cstr r) {
 		char const* lcur = l.ptr;
 		char const* lend = lcur +l.len;
 		char const* rcur = r;
@@ -97,7 +196,36 @@ namespace parse {
 		
 		while (digit_c(**pcur)) ++(*pcur);
 		
+		#if PROFILE_ATOF
+		if (val) {
+			BEGIN(atof);
+			u64 _begin = __rdtsc();
+			*val = (f32)atof(ret);
+			u64 _end = __rdtsc();
+			u64 _dt = _end -_begin;
+			_rdtsc += _dt;
+			END(atof);
+		}
+		#else
+		#if OVERRIDE_ATOF
+		
+		if (val) *val = my_str_to_f32(ret);
+		#if CHECK_MY_ATOF
+		if (val) {
+			f32 ref = (f32)atof(ret);
+			if (*val != ref) {
+				atof_not_equal += 1;
+				printf(">>> =%u !=%u '%s' -> ref %f != my %f \n", atof_equal, atof_not_equal, ret, ref, *val);
+			} else {
+				atof_equal += 1;
+			}
+		}
+		#endif
+		
+		#else
 		if (val) *val = (f32)atof(ret);
+		#endif
+		#endif
 		return { ret, (u32)(*pcur -ret) };
 	}
 	
@@ -125,6 +253,20 @@ namespace std {
 
 static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 	
+	#if PROFILE_ATOF
+	_atof_dt = 0;
+	_atof_count = 0;
+	_atof_min = INFd;
+	_atof_max = -INFd;
+	_rdtsc = 0;
+	
+	auto begin = glfwGetTime();
+	#endif
+	#if CHECK_MY_ATOF
+	atof_equal = 0;
+	atof_not_equal = 0;
+	#endif
+	
 	struct Vert_Indecies {
 		u32		pos;
 		u32		uv;
@@ -147,7 +289,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 	{ // load data from 
 		std::string file;
 		if (!read_text_file(filepath, &file)) {
-			dbg_assert(false, "Mesh file \"%s\" not found!", filepath);
+			log_warning_asset_load(filepath);
 			return;
 		}
 		
@@ -216,7 +358,7 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 				
 				whitespace(&cur);
 				
-				bool pos, uv, norm;
+				bool pos, uv=false, norm=false;
 				
 				pos = int_(&cur, &vert[i].pos);
 				if (!pos || vert[i].pos == 0) goto error; // position missing
@@ -262,6 +404,8 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 		for (ui line_i=0;; ++line_i) {
 			
 			auto tok = token(&cur);
+			//printf(">>> tok: %5d %.*s\n", line_i, tok.len,tok.ptr);
+			
 			if (!tok) {
 				log_warning("load_mesh: \"%s\" Missing line token, ignoring line!", filepath);
 				rest_of_line(&cur); // skip line
@@ -301,9 +445,6 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 		}
 	}
 	
-	vbo->vertecies.clear();
-	vbo->indices.clear();
-	
 	{ // expand triangles from individually indexed poss/uvs/norms to non-indexed
 		vbo->vertecies.reserve( tris.size() * 3 ); // max possible size
 		vbo->indices.reserve( tris.size() * 3 );
@@ -321,7 +462,6 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 				
 				auto entry = unique.find(v);
 				bool is_unique = entry == unique.end();
-				
 				
 				if (is_unique) {
 					
@@ -342,4 +482,18 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 		
 	}
 	
+	#if PROFILE_ATOF
+	printf(">>> %s: %u tris\n", filepath, (u32)tris.size());
+	
+	auto dt = glfwGetTime() -begin;
+	printf(">> atof: total %g per %g min %g max %g ms total time: %g ms   _rdtsc %g\n",
+	_atof_dt * 1000, _atof_dt / (f64)_atof_count * 1000,
+	_atof_min * 1000, _atof_max * 1000,
+	dt * 1000,
+	
+	(f64)_rdtsc / (f64)_atof_count);
+	#endif
+	#if CHECK_MY_ATOF
+	printf(">>> CHECK_MY_ATOF =%u !=%u\n", atof_equal, atof_not_equal);
+	#endif
 }

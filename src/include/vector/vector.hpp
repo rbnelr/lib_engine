@@ -68,6 +68,22 @@
 #undef V2
 #undef V3
 #undef V4
+
+#define T	u32
+#define V2	u32v2
+#define V3	u32v3
+#define V4	u32v4
+#define I_TO_F_CONV	1
+	
+	#include "vector_tv2.hpp"
+	#include "vector_tv3.hpp"
+	#include "vector_tv4.hpp"
+	
+#undef T
+#undef V2
+#undef V3
+#undef V4
+
 #undef I_TO_F_CONV
 
 //

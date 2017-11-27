@@ -55,7 +55,7 @@ static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
 	
 	std::string text;
 	if (!read_text_file(filepath, &text)) {
-		log_warning("shader file \"%s\" could not be loaded!", filepath);
+		log_warning_asset_load(filepath);
 		return false; // fail
 	}
 	
@@ -137,22 +137,100 @@ static void unload_program (GLuint prog) {
 }
 
 struct Base_Uniform {
-	GLint	gl_loc;
+	GLint	loc;
 	
-	void get_loc (GLuint gl_prog, cstr name) {
-		gl_loc = glGetUniformLocation(gl_prog, name);
+	void get_loc (GLuint prog, cstr name) {
+		loc = glGetUniformLocation(prog, name);
 	}
 };
 
 struct Uniform_M4 : public Base_Uniform {
-	void set (m4 m) {	glUniformMatrix4fv(gl_loc, 1, GL_FALSE, &m.arr[0][0]); }
+	void set (m4 m) {	glUniformMatrix4fv(loc, 1, GL_FALSE, &m.arr[0][0]); }
 };
 struct Uniform_V2 : public Base_Uniform {
-	void set (v2 v) {	glUniform2fv(gl_loc, 1, &v.x); }
+	void set (v2 v) {	glUniform2fv(loc, 1, &v.x); }
+};
+struct Uniform_IV2 : public Base_Uniform {
+	void set (iv2 v) {	glUniform2iv(loc, 1, &v.x); }
+};
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+static u8* load_texture2d_rgba8 (cstr filepath, iv2* dim) {
+	stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
+	int n;
+	return stbi_load(filepath, &dim->x, &dim->y, &n, 4);
+}
+
+struct Texture2D {
+	GLuint	tex;
+	iv2		dim;
+	
+	cstr	filename;
+	
+	#if RZ_AUTO_FILE_RELOADING
+	File_Change_Poller	fc;
+	#endif
+	
+	void init_load (cstr filename_) {
+		filename = filename_;
+		
+		glGenTextures(1, &tex);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		
+		auto filepath = prints("assets_src/textures/%s", filename);
+		
+		auto* data = load_texture2d_rgba8(filepath.c_str(), &dim);
+		if (!data) {
+			log_warning_asset_load(filepath.c_str());
+		} else {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, dim.x,dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+			
+			glGenerateMipmap(GL_TEXTURE_2D);
+		}
+		
+		#if RZ_AUTO_FILE_RELOADING
+		fc.init(filepath.c_str());
+		#endif
+		
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	
+	bool reload_if_needed () {
+		auto filepath = prints("assets_src/textures/%s", filename);
+		
+		bool reload = fc.poll_did_change(filepath.c_str());
+		if (!reload) return false;
+		
+		printf("texture source file changed, reloading \"%s\".\n", filepath.c_str());
+		
+		auto* data = load_texture2d_rgba8(filepath.c_str(), &dim);
+		if (!data) return false;
+		
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, dim.x,dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+		
+		glGenerateMipmap(GL_TEXTURE_2D);
+		
+		return true;
+	}
+	
+};
+
+struct Uniform_Texture {
+	GLint	unit;
+	
+	void bind (Texture2D const& t) {
+		glActiveTexture(GL_TEXTURE0 +unit);
+		glBindTexture(GL_TEXTURE_2D, t.tex);
+	}
 };
 
 struct Base_Shader {
-	GLuint		gl_prog;
+	GLuint		prog;
 	
 	cstr		vert_filename;
 	cstr		frag_filename;
@@ -166,39 +244,39 @@ struct Base_Shader {
 		vert_filename = vert_filename_;
 		frag_filename = frag_filename_;
 		
-		_load(&gl_prog);
+		_load(&prog);
 		
 		#if RZ_AUTO_FILE_RELOADING
-		std::string vert_filepath = prints("shaders/%s", vert_filename);
-		std::string frag_filepath = prints("shaders/%s", frag_filename);
+		auto vert_filepath = prints("shaders/%s", vert_filename);
+		auto frag_filepath = prints("shaders/%s", frag_filename);
 		
 		fc_vert.init(vert_filepath.c_str());
 		fc_frag.init(frag_filepath.c_str());
 		#endif
 	}
 	bool _load (GLuint* out) {
-		std::string vert_filepath = prints("shaders/%s", vert_filename);
-		std::string frag_filepath = prints("shaders/%s", frag_filename);
+		auto vert_filepath = prints("shaders/%s", vert_filename);
+		auto frag_filepath = prints("shaders/%s", frag_filename);
 		
 		return load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
 	}
-	bool try_reload () {
+	bool try_reload () { // we keep the old shader as long as the new one has compilation errors
 		GLuint tmp;
 		bool success = _load(&tmp);
 		if (success) {
-			unload_program(gl_prog);
-			gl_prog = tmp;
+			unload_program(prog);
+			prog = tmp;
 		}
 		return success;
 	}
 	bool reload_if_needed () {
 		#if RZ_AUTO_FILE_RELOADING
 		
-		bool reloaded = fc_vert.poll_did_change() || fc_frag.poll_did_change();
+		auto vert_filepath = prints("shaders/%s", vert_filename);
+		auto frag_filepath = prints("shaders/%s", frag_filename);
+		
+		bool reloaded = fc_vert.poll_did_change(vert_filepath.c_str()) || fc_frag.poll_did_change(frag_filepath.c_str());
 		if (reloaded) {
-			std::string vert_filepath = prints("shaders/%s", vert_filename);
-			std::string frag_filepath = prints("shaders/%s", frag_filename);
-			
 			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filepath.c_str(), frag_filepath.c_str());
 			reloaded = try_reload();
 		}
@@ -209,33 +287,53 @@ struct Base_Shader {
 	}
 	
 	void bind () {
-		glUseProgram(gl_prog);
+		glUseProgram(prog);
+	}
+};
+
+struct Common_Uniforms {
+	Uniform_M4		world_to_clip;
+	Uniform_V2		mcursor_pos;
+	Uniform_V2		screen_dim;
+	
+	void set (m4 world_to_clip_, v2 mcursor_pos_px, v2 screen_dim_px) {
+		world_to_clip.set(	world_to_clip_ );
+		mcursor_pos.set(	mcursor_pos_px );
+		screen_dim.set(		screen_dim_px );
 	}
 };
 
 struct Shader : public Base_Shader {
-	struct Common_Uniforms {
-		Uniform_M4		world_to_clip;
-		Uniform_V2		mcursor_pos;
-		Uniform_V2		screen_dim;
-		
-		void set (m4 world_to_clip_, v2 mcursor_pos_px, v2 screen_dim_px) {
-			world_to_clip.set(	world_to_clip_ );
-			mcursor_pos.set(	mcursor_pos_px );
-			screen_dim.set(		screen_dim_px );
-		}
-	} common;
-	
+	Common_Uniforms		common;
 	Uniform_M4			skybox_to_clip;
 	
 	void init_load (cstr v, cstr f) {
 		Base_Shader::init_load(v, f);
 		
-		common.world_to_clip.get_loc(gl_prog, "world_to_clip");
-		common.mcursor_pos.get_loc(gl_prog, "mcursor_pos");
-		common.screen_dim.get_loc(gl_prog, "screen_dim");
+		common.world_to_clip.get_loc(prog, "world_to_clip");
+		common.mcursor_pos.get_loc(prog, "mcursor_pos");
+		common.screen_dim.get_loc(prog, "screen_dim");
 		
-		skybox_to_clip.get_loc(gl_prog, "skybox_to_clip");
+		skybox_to_clip.get_loc(prog, "skybox_to_clip");
+	}
+};
+struct Shader_Tex : public Base_Shader {
+	Common_Uniforms		common;
+	Uniform_V2			tex_dim;
+	
+	Uniform_Texture		tex0;
+	
+	void init_load (cstr v, cstr f) {
+		Base_Shader::init_load(v, f);
+		
+		common.world_to_clip.get_loc(prog, "world_to_clip");
+		common.mcursor_pos.get_loc(prog, "mcursor_pos");
+		common.screen_dim.get_loc(prog, "screen_dim");
+		
+		tex_dim.get_loc(prog, "tex_dim");
+		
+		tex0.unit = 0;
+		glUniform1i( glGetUniformLocation(prog, "tex0"), 0 );
 	}
 };
 
@@ -245,7 +343,7 @@ struct Mesh_Vertex {
 	v2	uv;
 	v3	col;
 	
-	bool operator== (Mesh_Vertex cr r) const {
+	bool operator== (Mesh_Vertex const& r) const {
 		//return all(pos == r.pos) && all(norm == r.norm) && all(uv == r.uv) && all(col == r.col);
 		return memcmp(this, &r, sizeof(Mesh_Vertex)) == 0;
 	}
@@ -262,14 +360,14 @@ struct Mesh_Vbo {
 	std::vector<Mesh_Vertex>	vertecies;
 	std::vector<vert_indx_t>	indices;
 	
+	void init () {
+		glGenBuffers(1, &vbo_vert);
+		glGenBuffers(1, &vbo_indx);
+	}
+	
 	void clear () {
 		vertecies.clear();
 		indices.clear();
-	}
-	
-	void gen () {
-		glGenBuffers(1, &vbo_vert);
-		glGenBuffers(1, &vbo_indx);
 	}
 	
 	void upload () {
@@ -288,19 +386,19 @@ struct Mesh_Vbo {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
-		GLint pos =		glGetAttribLocation(shad->gl_prog, "pos_world");
+		GLint pos =		glGetAttribLocation(shad->prog, "pos_world");
 		glEnableVertexAttribArray(pos);
 		glVertexAttribPointer(pos,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, pos));
 		
-		GLint norm =	glGetAttribLocation(shad->gl_prog, "norm_world");
+		GLint norm =	glGetAttribLocation(shad->prog, "norm_world");
 		glEnableVertexAttribArray(norm);
 		glVertexAttribPointer(norm,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, norm));
 		
-		GLint uv =		glGetAttribLocation(shad->gl_prog, "uv");
+		GLint uv =		glGetAttribLocation(shad->prog, "uv");
 		glEnableVertexAttribArray(uv);
 		glVertexAttribPointer(uv,	2, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, uv));
 		
-		GLint col =		glGetAttribLocation(shad->gl_prog, "col");
+		GLint col =		glGetAttribLocation(shad->prog, "col");
 		glEnableVertexAttribArray(col);
 		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
 		

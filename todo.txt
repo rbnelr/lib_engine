@@ -39,6 +39,15 @@ DONE:
  -one derived struct for each shape (or tagged union)
  -trigger reuploads on changes of these variables
  
+#2017.11.27 mo. tag
+ profilied .obj mesh_loader because it took minutes to load a simple mesh on the notebook
+ replaced slow atof with my own simple implementation
+ -> seems to work fine for my data set, at least visually
+ 
+ added fov zoom and camera fly vel change by scrolling
+ 
+ texture loading
+ 
 TODO
 -FEATURES:
  

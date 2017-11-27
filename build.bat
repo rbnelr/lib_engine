@@ -81,7 +81,7 @@ rem /main
 		set dbg=/Od /EHsc /Ob1 /MDd /Zi /DRZ_DBG=1 /DRZ_DEV=1
 	) else if [!mode!] == [opt] (
 		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=1
-	) else if [!mode!] == [dbg] (
+	) else if [!mode!] == [release] (
 		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=0
 	)
 	
@@ -109,10 +109,12 @@ rem /vs
 :gcc
 	del !ROOT!!proj!.exe
 	
-	if [!release!] == [0] (
-		set dbg=-O0 -DRZ_DBG=1
-	) else  (
-		set dbg=-O3 -DRZ_DBG=0
+	if [!mode!] == [dbg] (
+		set dbg=-O0 -DRZ_DBG=1 -DRZ_DEV=1
+	) else if [!mode!] == [opt] (
+		set dbg=-O3 -DRZ_DBG=1 -DRZ_DEV=1
+	) else if [!mode!] == [release] (
+		set dbg=-O3 -DRZ_DBG=0 -DRZ_DEV=0
 	)
 	
 	set opt=!dbg! -mmmx -msse -msse2
