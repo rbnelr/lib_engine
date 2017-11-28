@@ -11,10 +11,10 @@ namespace font {
 		
 		stbtt_pack_range	pr;
 		
-		Glyph_Range (cstr override_font, f32 font_size, utf32 first, utf32 last): fontname{override_font}, pr{font_size, (int)first, nullptr, (int)(last +1 -first), nullptr} {
+		Glyph_Range (cstr font, f32 font_size, utf32 first, utf32 last): fontname{font}, pr{font_size, (int)first, nullptr, (int)(last +1 -first), nullptr} {
 			
 		}
-		Glyph_Range (cstr override_font, f32 font_size, std::initializer_list<utf32> l): fontname{override_font}, pr{font_size, 0, (int*)l.begin(), (int)l.size(), nullptr} {
+		Glyph_Range (cstr font, f32 font_size, std::initializer_list<utf32> l): fontname{font}, pr{font_size, 0, (int*)l.begin(), (int)l.size(), nullptr} {
 			
 		}
 	};
@@ -37,21 +37,12 @@ namespace font {
 		{ "meiryo.ttc",	jpsz,	jp_sym },
 	};
 	
-	static u32 texw = 512; // hopefully large enough for now, if not 
+	static u32 texw = 512; // hopefully large enough for now
 	static u32 texh = 512;
 	
-	static constexpr v2 QUAD_VERTS[] = {
-		v2(1,0), // MSVC claims this is not a constexpr when i put this arr into the Font struct, but it worked before ???
-		v2(1,1),
-		v2(0,0),
-		v2(0,0),
-		v2(1,1),
-		v2(0,1),
-	};
-	
 	struct Font {
-		Texture					tex;
-		VBO_Text			vbo;
+		Texture2D			tex;
+		Mesh_Vbo			vbo;
 		
 		u32						glyphs_count;
 		stbtt_packedchar*		glyphs_packed_chars;

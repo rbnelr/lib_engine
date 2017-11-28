@@ -27,6 +27,8 @@ typedef fhm		hm;
 #include "glad.c"
 #include "GLFW/glfw3.h"
 
+#include "platform.hpp"
+
 #if RZ_DEV
 	#define RZ_AUTO_FILE_RELOADING 1
 #else
@@ -69,117 +71,253 @@ static void log_warning_asset_load (cstr asset, cstr reason="") {
 	log_warning("\"%s\" could not be loaded!%s", asset, reason);
 }
 
-#include "platform.hpp"
+typedef u32 vert_indx_t;
+
 #include "gl.hpp"
+
+#define UV2(name)	Uniform(T_V2, name)
+#define UV3(name)	Uniform(T_V3, name)
+#define UM4(name)	Uniform(T_M4, name)
+
+static std::vector<Shader*>		g_shaders;
+static std::vector<Texture2D*>	g_textures;
+
+static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std::initializer_list<Shader::Uniform_Texture> t={}) {
+	Shader* s = new Shader;
+	g_shaders.push_back(s);
+	s->init_load(v, f, u, t);
+	return s;
+}
+
+static Texture2D* new_texture2d (cstr filename) {
+	Texture2D* t = new Texture2D;
+	g_textures.push_back(t);
+	t->init_load(filename);
+	return t;
+}
+
+//
+struct Mesh_Vertex {
+	v3	pos_model;
+	v3	norm_model;
+	v2	uv;
+	v3	col;
+	
+	bool operator== (Mesh_Vertex const& r) const {
+		//return all(pos == r.pos) && all(norm == r.norm) && all(uv == r.uv) && all(col == r.col);
+		return memcmp(this, &r, sizeof(Mesh_Vertex)) == 0;
+	}
+};
+static constexpr v3 DEFAULT_NORM =	0;
+static constexpr v2 DEFAULT_UV =	0.5f;
+static constexpr v3 DEFAULT_COL =	1;
+
+static Vertex_Layout mesh_vert_layout = {
+	{ "pos_world",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
+	{ "norm_world",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
+	{ "uv",			T_V2, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, uv) },
+	{ "col",		T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, col) }
+};
+
 #include "mesh_loader.hpp"
 #include "shapes.hpp"
 
-struct Base_Mesh {
-	Mesh_Vbo			vbo; // one vbo per mesh for now
-	Base_Shader*		shad;
-	
-	void init (Base_Shader* shad_) {
-		vbo.init();
-		shad = shad_;
-	}
-	
-	virtual bool reload_if_needed () = 0;
-	
+static void bind_texture_unit (GLint tex_unit, Texture2D* tex) {
+	glActiveTexture(GL_TEXTURE0 +tex_unit);
+	glBindTexture(GL_TEXTURE_2D, tex->tex);
+}
+
+enum mesh_type {
+	MT_FILE				=0,
+	MT_GEN_FLOOR		,
+	MT_GEN_TETRAHEDRON	,
+	MT_GEN_CUBE			,
+	MT_GEN_CYLINDER		,
+	MT_GEN_SPHERE		,
 };
 
-struct File_Mesh : public Base_Mesh {
-	cstr	filename;
+struct Mesh {
+	cstr	name;
+	
 	v3		pos_world;
 	m3		ori;
 	v3		scale;
 	
-	#if RZ_AUTO_FILE_RELOADING
-	File_Change_Poller	fc;
-	#endif
+	mesh_type	type;
 	
-	void init_load (Base_Shader* shad_, cstr filename_, v3 pos_world_, m3 ori_=m3::ident(), v3 scale_=1) {
-		Base_Mesh::init(shad_);
-		
-		filename =	filename_;
-		pos_world = pos_world_;
-		ori =		ori_;
-		scale =		scale_;
-		
-		reload();
-		
-		#if RZ_AUTO_FILE_RELOADING
-		std::string filepath = prints("assets_src/meshes/%s", filename);
-		fc.init(filepath.c_str());
-		#endif
+	Vbo			vbo; // one vbo per mesh for now
+	Shader*		shad;
+	
+	hm get_transform () {
+		return transl_rot_scale(pos_world, ori, scale);
 	}
+	
+	struct Texture {
+		GLint		tex_unit;
+		Texture2D*	tex;
+		
+		void bind () {
+			bind_texture_unit(tex_unit, tex);
+		}
+	};
+	std::vector<Texture>	textures;
+	
+	union {
+		struct { // MT_FILE
+			cstr					filename;
+			
+			#if RZ_AUTO_FILE_RELOADING
+			File_Change_Poller	fc;
+			#endif
+			
+		};
+		union { // generated
+			bool	changed;
+			
+			struct { // MT_GEN_FLOOR
+				void gen (Vbo* vbo, hm& t) { gen_tile_floor(&vbo->vertecies); };
+			} MT_GEN_FLOOR_;
+			struct { // MT_GEN_TETRAHEDRON
+				f32		radius;
+				
+				void gen (Vbo* vbo, hm& t) { gen_tetrahedron(&vbo->vertecies, t, radius); };
+			} MT_GEN_TETRAHEDRON_;
+			struct { // MT_GEN_CUBE
+				f32		radius;
+				
+				void gen (Vbo* vbo, hm& t) { gen_cube(&vbo->vertecies, t, radius); };
+			} MT_GEN_CUBE_;
+			struct { // MT_GEN_CYLINDER
+				f32		radius;
+				f32		length;
+				u32		faces;
+				
+				void gen (Vbo* vbo, hm& t) { gen_cylinder(&vbo->vertecies, t, radius, length, faces); };
+			} MT_GEN_CYLINDER_;
+			struct { // MT_GEN_SPHERE
+				f32		radius;
+				u32		wfaces;
+				u32		hfaces;
+				
+				void gen (Vbo* vbo, hm& t) { gen_iso_sphere(&vbo->vertecies, t, radius, wfaces, hfaces); };
+			} MT_GEN_SPHERE_;
+		};
+	};
 	
 	void reload () {
 		vbo.clear();
 		
-		auto filepath = prints("assets_src/meshes/%s", filename);
+		auto t = get_transform();
 		
-		load_mesh(&vbo, filepath.c_str(), transl_rot_scale(pos_world, ori, scale));
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOADING
-		auto filepath = prints("assets_src/meshes/%s", filename);
-		
-		bool reloaded = fc.poll_did_change(filepath.c_str());
-		if (reloaded) {
-			printf("mesh source file changed, reloading mesh \"%s\".\n", filepath.c_str());
-			reload();
+		switch (type) {
+			case MT_FILE: {
+				auto filepath = prints("assets_src/meshes/%s", filename);
+				
+				load_mesh(&vbo, filepath.c_str(), t);
+			} break;
+			
+			case MT_GEN_FLOOR:			MT_GEN_FLOOR_		.gen(&vbo,t);	break;
+			
+			case MT_GEN_TETRAHEDRON:	MT_GEN_TETRAHEDRON_	.gen(&vbo,t);	break;
+			case MT_GEN_CUBE:			MT_GEN_CUBE_		.gen(&vbo,t);	break;
+			case MT_GEN_CYLINDER:		MT_GEN_CYLINDER_	.gen(&vbo,t);	break;
+			case MT_GEN_SPHERE:			MT_GEN_SPHERE_		.gen(&vbo,t);	break;
+			
 		}
 		
-		return reloaded;
-		#else
-		return false;
-		#endif
+		vbo.upload();
+	}
+	bool reload_if_needed () {
+		switch (type) {
+			case MT_FILE: {
+				#if RZ_AUTO_FILE_RELOADING
+				if (type != MT_FILE) return false;
+				
+				auto filepath = prints("assets_src/meshes/%s", filename);
+				
+				bool reloaded = fc.poll_did_change(filepath.c_str());
+				if (reloaded) {
+					printf("mesh source file changed, reloading mesh \"%s\".\n", filepath.c_str());
+					reload();
+				}
+				
+				return reloaded;
+				#else
+				return false;
+				#endif
+			} break;
+			
+			default: return false;
+		}
 	}
 	
 };
 
-struct Generated_Tile_Floor : public Base_Mesh {
-	void init_load (Base_Shader* shad_) {
-		Base_Mesh::init(shad_);
-		gen_tile_floor(&vbo.vertecies);
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {	return false; }
-};
+static std::vector<Mesh*>		g_meshes;
 
-struct Generated_Tetrahedron : public Base_Mesh {
-	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r) {
-		Base_Mesh::init(shad_);
-		gen_tetrahedron(&vbo.vertecies, pos_world, ori, r);
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {	return false; }
-};
-struct Generated_Cube : public Base_Mesh {
-	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r) {
-		Base_Mesh::init(shad_);
-		gen_cube(&vbo.vertecies, pos_world, ori, r);
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {	return false; }
-};
-struct Generated_Cylinder : public Base_Mesh {
-	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r, f32 l, u32 faces) {
-		Base_Mesh::init(shad_);
-		gen_cylinder(&vbo.vertecies, pos_world, ori, r, l, faces);
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {	return false; }
-};
-struct Generated_Iso_Sphere : public Base_Mesh {
-	void init_load (Base_Shader* shad_, v3 pos_world, m3 ori, f32 r, u32 wfaces, u32 hfaces) {
-		Base_Mesh::init(shad_);
-		gen_iso_sphere(&vbo.vertecies, pos_world, ori, r, wfaces, hfaces);
-		vbo.upload();
-	}
-	virtual bool reload_if_needed () {	return false; }
-};
+static Mesh* _new_generic_mesh (cstr n, Shader* s, mesh_type type, v3 p, m3 o) {
+	Mesh* m = new Mesh;
+	g_meshes.push_back(m);
+	
+	m->name = n;
+	
+	m->pos_world = p;
+	m->ori = o;
+	m->scale = 1;
+	
+	m->type = type;
+	m->vbo.init(&mesh_vert_layout);
+	m->shad = s;
+	
+	return m;
+}
+static Mesh* new_mesh (cstr n, Shader* s, v3 p, m3 o, cstr f, std::initializer_list<Mesh::Texture> t={}) {
+	Mesh* m = _new_generic_mesh(n, s, MT_FILE, p, o);
+	m->filename = f;
+	m->textures = t;
+	m->reload();
+	
+	#if RZ_AUTO_FILE_RELOADING
+	auto filepath = prints("assets_src/meshes/%s", m->filename);
+	m->fc.init(filepath.c_str());
+	#endif
+	return m;
+}
+
+static Mesh* new_gen_tile_floor		(cstr n, Shader* s) {
+	Mesh* m = _new_generic_mesh(n, s, MT_GEN_FLOOR, 0, m3::ident());
+	m->reload();
+	m->changed = false;
+	return m;
+}
+static Mesh* new_gen_tetrahedron	(cstr n, Shader* s, v3 p, m3 o, f32 r) {
+	Mesh* m = _new_generic_mesh(n, s, MT_GEN_TETRAHEDRON, p, o);
+	m->MT_GEN_TETRAHEDRON_ =	{ r };
+	m->reload();
+	m->changed = false;
+	return m;
+}
+static Mesh* new_gen_cube			(cstr n, Shader* s, v3 p, m3 o, f32 r) {
+	Mesh* m = _new_generic_mesh(n, s, MT_GEN_CUBE, p, o);
+	m->MT_GEN_CUBE_ =			{ r };
+	m->reload();
+	m->changed = false;
+	return m;
+}
+static Mesh* new_gen_cylinder		(cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces) {
+	Mesh* m = _new_generic_mesh(n, s, MT_GEN_CYLINDER, p, o);
+	m->MT_GEN_CYLINDER_ =		{ r, l, faces };
+	m->reload();
+	m->changed = false;
+	return m;
+}
+static Mesh* new_gen_iso_sphere		(cstr n, Shader* s, v3 p, m3 o, f32 r, u32 facesw, u32 facesh) {
+	Mesh* m = _new_generic_mesh(n, s, MT_GEN_SPHERE, p, o);
+	m->MT_GEN_SPHERE_ =			{ r, facesw, facesh };
+	m->reload();
+	m->changed = false;
+	return m;
+}
 
 //
 static f32			dt = 0;
@@ -325,47 +463,34 @@ int main (int argc, char** argv) {
 	
 	//
 	
-	Shader		shad, shad2, shad_skybox;
-	Shader_Tex	shad_diffuse, shad_overlay_tex;
-	shad				.init_load("test.vert",			"test.frag");
-	shad2				.init_load("normals.vert",		"normals.frag");
-	shad_skybox			.init_load("skybox.vert",		"skybox.frag");
-	shad_diffuse		.init_load("diffuse.vert",		"diffuse.frag");
-	shad_overlay_tex	.init_load("overlay_tex.vert",	"overlay_tex.frag");
+	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
 	
-	std::vector<Base_Shader*> shaders = { &shad, &shad2, &shad_skybox, &shad_diffuse, &shad_overlay_tex };
+	auto* shad_skybox =				new_shader("skybox.vert",		"skybox.frag",		{UCOM, UM4("skybox_to_clip")});
+	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",	{UCOM, UV2("tex_dim")}, {{0,"tex"}});
 	
-	Texture2D	tex_test, tex_cerberus_diffuse;
-	tex_test				.init_load("test.png");
-	tex_cerberus_diffuse	.init_load("cerberus/Cerberus_A.tga");
+	auto* tex_test =				new_texture2d("test.png");
 	
-	std::vector<Texture2D*>	textures = { &tex_test, &tex_cerberus_diffuse };
-	
-	Generated_Tile_Floor	mesh_tile_floor;
-	Generated_Tetrahedron	mesh_tetrahedron;
-	Generated_Cube			mesh_cube;
-	Generated_Cylinder		mesh_cylinder;
-	Generated_Iso_Sphere	mesh_iso_sphere;
-	mesh_tile_floor		.init_load(&shad);
-	mesh_tetrahedron	.init_load(&shad, v3(+2,+2,0), rotate3_Z(deg(13)), 1.0f / (1 +1.0f/3));
-	mesh_cube			.init_load(&shad, v3( 0,+2,0), rotate3_Z(deg(37)), 0.5f);
-	mesh_cylinder		.init_load(&shad, v3(-2,+2,0), m3::ident(), 0.5f, 2, 24);
-	mesh_iso_sphere		.init_load(&shad, v3(-3, 0,0), m3::ident(), 0.5f, 64, 32);
-	
-	
-	File_Mesh		mesh_pedestal, mesh_multi_obj_test, mesh_cerberus, mesh_nier;
-	mesh_pedestal		.init_load(&shad2, "pedestal.obj",				v3(3,0,0),		rotate3_Z(deg(-70)));
-	mesh_cerberus		.init_load(&shad_diffuse, "cerberus/cerberus.obj",		v3(0,0,1),		rotate3_Z(deg(45)));
-	mesh_multi_obj_test	.init_load(&shad2, "multi_obj_test.obj",		v3(10,0,0),		rotate3_Z(deg(-78)));
-	mesh_nier			.init_load(&shad2, "nier_models_test.obj",		v3(-4,-2,0),	rotate3_Z(deg(90)));
-	
-	
-	std::vector<Base_Mesh*> meshes = {
-		&mesh_tile_floor,
-		&mesh_tetrahedron, &mesh_cube, &mesh_cylinder, &mesh_iso_sphere,
-		&mesh_pedestal, &mesh_multi_obj_test, &mesh_cerberus, &mesh_nier
-		//&mesh_pedestal, &mesh_multi_obj_test, &mesh_cerberus
-	};
+	{
+		
+		
+		auto* shad =				new_shader("test.vert",			"test.frag",		{UCOM, UM4("world_to_clip")});
+		auto* shad2 =				new_shader("normals.vert",		"normals.frag",		{UCOM, UM4("world_to_clip")});
+		
+		new_gen_tile_floor("tile_floor",	shad);
+		new_gen_tetrahedron("tetrahedron",	shad,			v3(+2,+2,0),	rotate3_Z(deg(13)),		1.0f / (1 +1.0f/3));
+		new_gen_cube("cube",				shad,			v3( 0,+2,0),	rotate3_Z(deg(37)),		0.5f);
+		new_gen_cylinder("cylinder",		shad,			v3(-2,+2,0),	m3::ident(),			0.5f, 2, 24);
+		new_gen_iso_sphere("iso_sphere",	shad,			v3(-3, 0,0),	m3::ident(),			0.5f, 64, 32);
+		
+		new_mesh("pedestal",				shad2,			v3(3,0,0),		rotate3_Z(deg(-70)),	"pedestal.obj");
+		new_mesh("multi_obj_test",			shad2,			v3(10,0,0),		rotate3_Z(deg(-78)),	"multi_obj_test.obj");
+		new_mesh("nier",					shad2,			v3(-4,-2,0),	rotate3_Z(deg(90)),		"nier_models_test.obj");
+		
+		auto* tex_cerb_albedo =		new_texture2d("cerberus/Cerberus_A.tga");
+		auto* shad_diffuse =		new_shader("diffuse.vert",		"diffuse.frag",	{UCOM, UM4("world_to_clip")}, {{0,"albedo"}});
+		
+		new_mesh("cerberus",				shad_diffuse, v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}});
+	}
 	
 	// 
 	f64 prev_t = glfwGetTime();
@@ -389,9 +514,9 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		for (auto* s : shaders)		s->reload_if_needed();
-		for (auto* m : meshes)		m->reload_if_needed();
-		for (auto* t : textures)	t->reload_if_needed();
+		for (auto* s : g_shaders)		s->reload_if_needed();
+		for (auto* t : g_textures)		t->reload_if_needed();
+		for (auto* m : g_meshes)		m->reload_if_needed();
 		
 		iv2 wnd_dim;
 		v2	wnd_dim_aspect;
@@ -474,25 +599,16 @@ int main (int argc, char** argv) {
 		
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
-		shad.bind();
-		shad				.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-		shad2.bind();
-		shad2				.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-		shad_skybox.bind();
-		shad_skybox			.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-		shad_diffuse.bind();
-		shad_diffuse		.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-		shad_overlay_tex.bind();
-		shad_overlay_tex	.common.set(world_to_clip, bottom_up_mcursor_pos(), (v2)wnd_dim);
-		
-		shad_diffuse.tex0.bind(tex_cerberus_diffuse);
+		for (auto* s : g_shaders) {
+			s->set_unif("screen_dim", (v2)wnd_dim);
+			s->set_unif("mcursor_pos", bottom_up_mcursor_pos());
+		}
 		
 		if (1) { // draw skybox
 			glDisable(GL_DEPTH_TEST);
 			
-			shad_skybox.bind();
-			shad_skybox.skybox_to_clip.set(skybox_to_clip);
-			//shad_skybox.tex_skybox.bind();
+			shad_skybox->bind();
+			shad_skybox->set_unif("skybox_to_clip", skybox_to_clip);
 			
 			// Coordinates generated in vertex shader
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -507,14 +623,18 @@ int main (int argc, char** argv) {
 		}
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
-		for (auto* m : meshes) {
+		for (auto* m : g_meshes) {
 			m->shad->bind();
+			m->shad->set_unif("world_to_clip", world_to_clip);
+			
+			for (auto& t : m->textures) t.bind();
+			
 			m->vbo.draw_entire(m->shad);
 		}
 		
-		shad_overlay_tex.bind();
-		shad_overlay_tex.tex_dim.set( (v2)tex_test.dim );
-		shad_overlay_tex.tex0.bind( tex_test );
+		shad_overlay_tex->bind();
+		shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim);
+		bind_texture_unit(0, tex_test);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		
 		glfwSwapBuffers(wnd);

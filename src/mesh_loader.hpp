@@ -246,12 +246,12 @@ namespace std {
 	};
 	template<> struct hash<Mesh_Vertex> {
 		size_t operator() (Mesh_Vertex const& v) const {
-			return hash<v3>()(v.pos) ^ hash<v3>()(v.norm) ^ hash<v2>()(v.uv) ^ hash<v3>()(v.col);
+			return hash<v3>()(v.pos_model) ^ hash<v3>()(v.norm_model) ^ hash<v2>()(v.uv) ^ hash<v3>()(v.col);
 		}
 	};
 }
 
-static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
+static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 	
 	#if PROFILE_ATOF
 	_atof_dt = 0;
@@ -446,29 +446,35 @@ static void load_mesh (Mesh_Vbo* vbo, cstr filepath, hm transform) {
 	}
 	
 	{ // expand triangles from individually indexed poss/uvs/norms to non-indexed
-		vbo->vertecies.reserve( tris.size() * 3 ); // max possible size
+		vbo->vertecies.reserve( tris.size() * 3 * sizeof(Mesh_Vertex) ); // vertecies are stored as a genric byte array
+																		 // this is the max possible size
 		vbo->indices.reserve( tris.size() * 3 );
 		
 		std::unordered_map<Mesh_Vertex, vert_indx_t> unique;
 		
 		for (auto& t : tris) {
 			for (ui i=0; i<3; ++i) {
-				Mesh_Vertex v;
+				union U {
+					Mesh_Vertex v;
+					byte		raw[sizeof(Mesh_Vertex)];
+					
+					U () {}
+				} u;
 				
-				v.pos =		transform * poss[t.arr[i].pos -1];
-				v.norm =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: MESH_DEFAULT_NORM;
-				v.uv =		t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: MESH_DEFAULT_UV;
-				v.col =		MESH_DEFAULT_COL;
+				u.v.pos_model =		transform * poss[t.arr[i].pos -1];
+				u.v.norm_model =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: DEFAULT_NORM;
+				u.v.uv =			t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: DEFAULT_UV;
+				u.v.col =			DEFAULT_COL;
 				
-				auto entry = unique.find(v);
+				auto entry = unique.find(u.v);
 				bool is_unique = entry == unique.end();
 				
 				if (is_unique) {
 					
 					auto indx = (vert_indx_t)unique.size();
-					unique.insert({v, indx});
+					unique.insert({u.v, indx});
 					
-					vbo->vertecies.push_back(v);
+					memcpy( &*vector_append(&vbo->vertecies, sizeof(u.raw)), u.raw, sizeof(u.raw) );
 					
 					vbo->indices.push_back(indx);
 					

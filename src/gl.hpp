@@ -136,25 +136,12 @@ static void unload_program (GLuint prog) {
 	glDeleteProgram(prog);
 }
 
-struct Base_Uniform {
-	GLint	loc;
-	
-	void get_loc (GLuint prog, cstr name) {
-		loc = glGetUniformLocation(prog, name);
-	}
-};
-
-struct Uniform_M4 : public Base_Uniform {
-	void set (m4 m) {	glUniformMatrix4fv(loc, 1, GL_FALSE, &m.arr[0][0]); }
-};
-struct Uniform_V2 : public Base_Uniform {
-	void set (v2 v) {	glUniform2fv(loc, 1, &v.x); }
-};
-struct Uniform_IV2 : public Base_Uniform {
-	void set (iv2 v) {	glUniform2iv(loc, 1, &v.x); }
-};
-
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_BMP	1
+#define STBI_ONLY_PNG	1
+#define STBI_ONLY_TGA	1
+//#define STBI_ONLY_JPEG	1
+
 #include "stb_image.h"
 
 static u8* load_texture2d_rgba8 (cstr filepath, iv2* dim) {
@@ -201,6 +188,7 @@ struct Texture2D {
 	}
 	
 	bool reload_if_needed () {
+		#if RZ_AUTO_FILE_RELOADING
 		auto filepath = prints("assets_src/textures/%s", filename);
 		
 		bool reload = fc.poll_did_change(filepath.c_str());
@@ -216,20 +204,66 @@ struct Texture2D {
 		glGenerateMipmap(GL_TEXTURE_2D);
 		
 		return true;
+		#else
+		return false;
+		#endif
 	}
 	
 };
 
-struct Uniform_Texture {
-	GLint	unit;
+enum data_type {
+	T_FLT		=0,
+	T_V2		,
+	T_V3		,
+	T_V4		,
 	
-	void bind (Texture2D const& t) {
-		glActiveTexture(GL_TEXTURE0 +unit);
-		glBindTexture(GL_TEXTURE_2D, t.tex);
+	T_INT		,
+	T_IV2		,
+	T_IV3		,
+	T_IV4		,
+	
+	T_M3		,
+	T_M4		,
+};
+
+struct Uniform {
+	GLint		loc;
+	data_type	type;
+	cstr		name;
+	
+	Uniform (data_type t, cstr n): type{t}, name{n} {}
+	
+	void set (f32 v) {
+		dbg_assert(type == T_FLT);
+		glUniform1fv(loc, 1, &v);
+	}
+	void set (v2 v) {
+		dbg_assert(type == T_V2);
+		glUniform2fv(loc, 1, &v.x);
+	}
+	void set (v3 v) {
+		dbg_assert(type == T_V3);
+		glUniform3fv(loc, 1, &v.x);
+	}
+	void set (v4 v) {
+		dbg_assert(type == T_V4);
+		glUniform4fv(loc, 1, &v.x);
+	}
+	void set (iv2 v) {
+		dbg_assert(type == T_IV2);
+		glUniform2iv(loc, 1, &v.x);
+	}
+	void set (m3 v) {
+		dbg_assert(type == T_M3);
+		glUniformMatrix3fv(loc, 1, GL_FALSE, &v.arr[0][0]);
+	}
+	void set (m4 v) {
+		dbg_assert(type == T_M4);
+		glUniformMatrix4fv(loc, 1, GL_FALSE, &v.arr[0][0]);
 	}
 };
 
-struct Base_Shader {
+struct Shader {
 	GLuint		prog;
 	
 	cstr		vert_filename;
@@ -240,9 +274,23 @@ struct Base_Shader {
 	File_Change_Poller	fc_frag;
 	#endif
 	
-	void init_load (cstr vert_filename_, cstr frag_filename_) {
-		vert_filename = vert_filename_;
-		frag_filename = frag_filename_;
+	struct Uniform_Texture {
+		GLint			tex_unit;
+		GLint			loc;
+		cstr			name;
+		
+		Uniform_Texture (GLint unit, cstr n): tex_unit{unit}, name{n} {}
+	};
+
+	std::vector<Uniform>			uniforms;
+	std::vector<Uniform_Texture>	textures;
+	
+	void init_load (cstr v, cstr f, std::initializer_list<Uniform> u, std::initializer_list<Uniform_Texture> t) {
+		vert_filename = v;
+		frag_filename = f;
+		
+		uniforms = u;
+		textures = t;
 		
 		_load(&prog);
 		
@@ -258,8 +306,27 @@ struct Base_Shader {
 		auto vert_filepath = prints("shaders/%s", vert_filename);
 		auto frag_filepath = prints("shaders/%s", frag_filename);
 		
-		return load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
+		bool res = load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
+		get_uniform_locations();
+		setup_uniform_textures();
+		return res;
 	}
+	
+	void get_uniform_locations () {
+		for (auto& u : uniforms) {
+			u.loc = glGetUniformLocation(prog, u.name);
+			//if (u.loc <= -1) log_warning("Uniform not valid %s!", u.name);
+		}
+	}
+	
+	void setup_uniform_textures () {
+		for (auto& t : textures) {
+			t.loc = glGetUniformLocation(prog, t.name);
+			//if (t.loc <= -1) log_warning("Uniform Texture not valid %s!", t.name);
+			glUniform1i(t.loc, t.tex_unit);
+		}
+	}
+	
 	bool try_reload () { // we keep the old shader as long as the new one has compilation errors
 		GLuint tmp;
 		bool success = _load(&tmp);
@@ -289,80 +356,86 @@ struct Base_Shader {
 	void bind () {
 		glUseProgram(prog);
 	}
-};
-
-struct Common_Uniforms {
-	Uniform_M4		world_to_clip;
-	Uniform_V2		mcursor_pos;
-	Uniform_V2		screen_dim;
 	
-	void set (m4 world_to_clip_, v2 mcursor_pos_px, v2 screen_dim_px) {
-		world_to_clip.set(	world_to_clip_ );
-		mcursor_pos.set(	mcursor_pos_px );
-		screen_dim.set(		screen_dim_px );
+	Uniform* get_uniform (cstr name) {
+		for (auto& u : uniforms) {
+			if (strcmp(u.name, name) == 0) {
+				return &u;
+			}
+		}
+		return nullptr;
+	}
+	
+	template <typename T>
+	void set_unif (cstr name, T v) {
+		auto* u = get_uniform(name);
+		if (u) u->set(v);
+		else {
+			log_warning("Uniform %s is not a uniform in the shader!", name);
+		}
 	}
 };
 
-struct Shader : public Base_Shader {
-	Common_Uniforms		common;
-	Uniform_M4			skybox_to_clip;
+struct Vertex_Layout {
+	struct Attribute {
+		cstr		name;
+		data_type	type;
+		u64			stride;
+		u64			offs;
+	};
 	
-	void init_load (cstr v, cstr f) {
-		Base_Shader::init_load(v, f);
-		
-		common.world_to_clip.get_loc(prog, "world_to_clip");
-		common.mcursor_pos.get_loc(prog, "mcursor_pos");
-		common.screen_dim.get_loc(prog, "screen_dim");
-		
-		skybox_to_clip.get_loc(prog, "skybox_to_clip");
-	}
-};
-struct Shader_Tex : public Base_Shader {
-	Common_Uniforms		common;
-	Uniform_V2			tex_dim;
+	std::vector<Attribute>	attribs;
 	
-	Uniform_Texture		tex0;
+	Vertex_Layout (std::initializer_list<Attribute> a): attribs{a} {}
 	
-	void init_load (cstr v, cstr f) {
-		Base_Shader::init_load(v, f);
-		
-		common.world_to_clip.get_loc(prog, "world_to_clip");
-		common.mcursor_pos.get_loc(prog, "mcursor_pos");
-		common.screen_dim.get_loc(prog, "screen_dim");
-		
-		tex_dim.get_loc(prog, "tex_dim");
-		
-		tex0.unit = 0;
-		glUniform1i( glGetUniformLocation(prog, "tex0"), 0 );
+	void bind_attrib_arrays (Shader const* shad) {
+		for (auto& a : attribs) {
+			
+			GLint loc = glGetAttribLocation(shad->prog, a.name);
+			//if (loc <= -1) log_warning("Attribute %s is not used in the shader!", a.name);
+			
+			glEnableVertexAttribArray(loc);
+			
+			GLint comps = 1;
+			GLenum type = GL_FLOAT;
+			switch (a.type) {
+				case T_FLT:	comps = 1;	type = GL_FLOAT;	break;
+				case T_V2:	comps = 2;	type = GL_FLOAT;	break;
+				case T_V3:	comps = 3;	type = GL_FLOAT;	break;
+				case T_V4:	comps = 4;	type = GL_FLOAT;	break;
+				
+				case T_INT:	comps = 1;	type = GL_INT;		break;
+				case T_IV2:	comps = 2;	type = GL_INT;		break;
+				case T_IV3:	comps = 3;	type = GL_INT;		break;
+				case T_IV4:	comps = 4;	type = GL_INT;		break;
+				
+				default: dbg_assert(false);
+			}
+			
+			glVertexAttribPointer(loc, comps, type, GL_FALSE, a.stride, (void*)a.offs);
+			
+		}
 	}
 };
 
-struct Mesh_Vertex {
-	v3	pos;
-	v3	norm;
-	v2	uv;
-	v3	col;
-	
-	bool operator== (Mesh_Vertex const& r) const {
-		//return all(pos == r.pos) && all(norm == r.norm) && all(uv == r.uv) && all(col == r.col);
-		return memcmp(this, &r, sizeof(Mesh_Vertex)) == 0;
-	}
-};
-static constexpr v3 MESH_DEFAULT_NORM =		0;
-static constexpr v2 MESH_DEFAULT_UV =		0.5f;
-static constexpr v3 MESH_DEFAULT_COL =		1;
-
-typedef u32 vert_indx_t;
-
-struct Mesh_Vbo {
+struct Vbo {
 	GLuint						vbo_vert;
 	GLuint						vbo_indx;
-	std::vector<Mesh_Vertex>	vertecies;
+	std::vector<byte>			vertecies;
 	std::vector<vert_indx_t>	indices;
 	
-	void init () {
+	Vertex_Layout*		layout;
+	
+	bool format_is_indexed () {
+		return indices.size() > 0;
+	}
+	
+	void init (Vertex_Layout* l) {
+		layout = l;
+		
 		glGenBuffers(1, &vbo_vert);
 		glGenBuffers(1, &vbo_indx);
+		
 	}
 	
 	void clear () {
@@ -375,47 +448,35 @@ struct Mesh_Vbo {
 		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(vertecies), NULL, GL_STATIC_DRAW);
 		glBufferData(GL_ARRAY_BUFFER, vector_size_bytes(vertecies), vertecies.data(), GL_STATIC_DRAW);
 		
-		if (indices.size()) {
+		if (format_is_indexed()) {
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, vector_size_bytes(indices), NULL, GL_STATIC_DRAW);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, vector_size_bytes(indices), indices.data(), GL_STATIC_DRAW);
 		}
 	}
 	
-	void bind (Base_Shader const* shad) {
+	void bind (Shader const* shad) {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
-		GLint pos =		glGetAttribLocation(shad->prog, "pos_world");
-		glEnableVertexAttribArray(pos);
-		glVertexAttribPointer(pos,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, pos));
+		layout->bind_attrib_arrays(shad);
 		
-		GLint norm =	glGetAttribLocation(shad->prog, "norm_world");
-		glEnableVertexAttribArray(norm);
-		glVertexAttribPointer(norm,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, norm));
-		
-		GLint uv =		glGetAttribLocation(shad->prog, "uv");
-		glEnableVertexAttribArray(uv);
-		glVertexAttribPointer(uv,	2, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, uv));
-		
-		GLint col =		glGetAttribLocation(shad->prog, "col");
-		glEnableVertexAttribArray(col);
-		glVertexAttribPointer(col,	3, GL_FLOAT, GL_FALSE, sizeof(Mesh_Vertex), (void*)offsetof(Mesh_Vertex, col));
-		
-		if (indices.size()) {
+		if (format_is_indexed()) {
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
 		} else {
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 		}
 	}
 	
-	void draw_entire (Base_Shader const* shad) {
+	void draw_entire (Shader const* shad) {
 		bind(shad);
 		
-		if (indices.size()) {
-			glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, NULL);
+		if (format_is_indexed()) {
+			if (indices.size() > 0)
+				glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, NULL);
 		} else {
-			glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
+			if (vertecies.size() > 0)
+				glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
 		}
 	}
 };
