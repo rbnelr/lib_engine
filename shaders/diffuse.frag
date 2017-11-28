@@ -1,7 +1,8 @@
 #version 150 core // version 3.2
 
-in		vec3	vs_pos_world;
-in		vec3	vs_norm_world;
+in		vec3	vs_pos_cam;
+in		vec3	vs_norm_cam;
+in		vec4	vs_tang_cam;
 in		vec2	vs_uv;
 in		vec3	vs_col;
 

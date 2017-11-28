@@ -17,10 +17,6 @@ static void stop_mouse_look () {
 
 //
 
-static void glfw_error_proc(int err, const char* msg) {
-	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
-}
-
 int vsync_mode = 1;
 static void set_vsync (int mode) {
 	vsync_mode = mode;
@@ -76,6 +72,67 @@ static void toggle_fullscreen () {
 GLuint	g_vao;
 #endif
 
+static void glfw_error_proc (int err, const char* msg) {
+	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
+}
+
+static void APIENTRY ogl_debug_proc (GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, cstr message, void const* userParam) {
+	
+	/*
+	if (source == GL_DEBUG_SOURCE_SHADER_COMPILER_ARB) {
+		return;
+	}
+	*/
+	
+	switch (id) {
+		case 131185: // Buffer detailed info (where the memory lives which is supposed to depend on the usage hint)
+		case 1282: // using shader that was not compiled successfully
+		
+		
+		//case 131154: // Pixel transfer sync with rendering warning
+		
+		//case 1282: // Wierd error on notebook when trying to do texture streaming
+		//case 131222: // warning with unused shadow samplers ? (Program undefined behavior warning: Sampler object 0 is bound to non-depth texture 0, yet it is used with a program that uses a shadow sampler . This is undefined behavior.), This might just be unused shadow samplers, which should not be a problem
+		//case 131218: // performance warning, because of shader recompiling based on some 'key'
+			return; 
+	}
+	
+	cstr src_str = "<unknown>";
+	switch (source) {
+		case GL_DEBUG_SOURCE_API_ARB:				src_str = "GL_DEBUG_SOURCE_API_ARB";				break;
+		case GL_DEBUG_SOURCE_WINDOW_SYSTEM_ARB:		src_str = "GL_DEBUG_SOURCE_WINDOW_SYSTEM_ARB";		break;
+		case GL_DEBUG_SOURCE_SHADER_COMPILER_ARB:	src_str = "GL_DEBUG_SOURCE_SHADER_COMPILER_ARB";	break;
+		case GL_DEBUG_SOURCE_THIRD_PARTY_ARB:		src_str = "GL_DEBUG_SOURCE_THIRD_PARTY_ARB";		break;
+		case GL_DEBUG_SOURCE_APPLICATION_ARB:		src_str = "GL_DEBUG_SOURCE_APPLICATION_ARB";		break;
+		case GL_DEBUG_SOURCE_OTHER_ARB:				src_str = "GL_DEBUG_SOURCE_OTHER_ARB";				break;
+	}
+	
+	cstr type_str = "<unknown>";
+	switch (source) {
+		case GL_DEBUG_TYPE_ERROR_ARB:				type_str = "GL_DEBUG_TYPE_ERROR_ARB";				break;
+		case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_ARB:	type_str = "GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_ARB";	break;
+		case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_ARB:	type_str = "GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_ARB";	break;
+		case GL_DEBUG_TYPE_PORTABILITY_ARB:			type_str = "GL_DEBUG_TYPE_PORTABILITY_ARB";			break;
+		case GL_DEBUG_TYPE_PERFORMANCE_ARB:			type_str = "GL_DEBUG_TYPE_PERFORMANCE_ARB";			break;
+		case GL_DEBUG_TYPE_OTHER_ARB:				type_str = "GL_DEBUG_TYPE_OTHER_ARB";				break;
+	}
+	
+	cstr severity_str = "<unknown>";
+	switch (severity) {
+		case GL_DEBUG_SEVERITY_HIGH_ARB:			severity_str = "GL_DEBUG_SEVERITY_HIGH_ARB";		break;
+		case GL_DEBUG_SEVERITY_MEDIUM_ARB:			severity_str = "GL_DEBUG_SEVERITY_MEDIUM_ARB";		break;
+		case GL_DEBUG_SEVERITY_LOW_ARB:				severity_str = "GL_DEBUG_SEVERITY_LOW_ARB";			break;
+	}
+	
+	if (severity == GL_DEBUG_SEVERITY_HIGH_ARB && 0) {
+		dbg_assert(false, "OpenGL debug proc: severity: %s src: %s type: %s id: %d  %s\n",
+				severity_str, src_str, type_str, id, message);
+	} else {
+		log_warning("OpenGL debug proc: severity: %s src: %s type: %s id: %d  %s\n",
+				severity_str, src_str, type_str, id, message);
+	}
+}
+
 static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 default_wnd_dim) {
 	
 	glfwSetErrorCallback(glfw_error_proc);
@@ -87,6 +144,7 @@ static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 d
 	if (GL_VER_MAJOR >= 3 && GL_VER_MINOR >= 2) {
 		glfwWindowHint(GLFW_OPENGL_PROFILE,		GLFW_OPENGL_CORE_PROFILE);
 	}
+	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT,	1);
 	
 	{ // open and postion window
 		primary_monitor = glfwGetPrimaryMonitor();
@@ -120,6 +178,11 @@ static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 d
 	
 	glfwMakeContextCurrent(wnd);
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+	
+	if (GLAD_GL_ARB_debug_output) {
+		glDebugMessageCallbackARB(ogl_debug_proc, 0);
+		//DEBUG_OUTPUT_SYNCHRONOUS_ARB this exists -> if ogl_debug_proc needs to be thread safe
+	}
 	
 	if (GL_VAOS_REQUIRED) {
 		glGenVertexArrays(1, &g_vao);

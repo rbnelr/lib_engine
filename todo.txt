@@ -50,6 +50,9 @@ DONE:
  
  rewrote the gl abstraction into a smarter form,
  
+#2017.11.28 di. tag
+ switched to space transformations happening in vertex shader for maximum flexibility
+ 
 TODO
 -FEATURES:
  

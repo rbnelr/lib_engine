@@ -179,7 +179,7 @@ public:
 	
 	M2 m2 () const {											return M2::column( arr[0].xy(), arr[1].xy() ); }
 	M3 m3 () const {											return M3::column( arr[0], arr[1], arr[2] ); }
-	M4 m4 () const {											return M4::column( V4(arr[0],0), V4(arr[1],0), V4(arr[2],0), V4(0,0,0,1) ); }
+	M4 m4 () const {											return M4::column( V4(arr[0],0), V4(arr[1],0), V4(arr[2],0), V4(arr[3],1) ); }
 	
 	HM& operator*= (HM r);
 };

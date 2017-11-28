@@ -1,11 +1,22 @@
 #version 150 core // version 3.2
 
-in		vec3	vs_pos_world_rot;
+in		vec3	vs_pos_cam;
+in		vec3	vs_norm_cam;
+in		vec4	vs_tang_cam;
+in		vec2	vs_uv;
+in		vec3	vs_col;
 
 out		vec4	frag_col;
 
 uniform	vec2	mcursor_pos;
 uniform	vec2	screen_dim;
+
+uniform sampler2D	albedo;
+uniform sampler2D	normal;
+uniform sampler2D	metallic;
+uniform sampler2D	roughness;
+
+uniform mat4	cam_to_world;
 
 vec2 mouse () {		return mcursor_pos / screen_dim; }
 vec2 screen () {	return gl_FragCoord.xy / screen_dim; }
@@ -96,5 +107,17 @@ vec3 sky (vec3 dir_world) {
 }
 
 void main () {
-	frag_col = vec4( sky(normalize(vs_pos_world_rot)), 1 );
+	vec3 alb = vec4(texture(albedo, vs_uv).rgb, 1).rgb;
+	
+	vec3 cam_to_p = normalize(vs_pos_cam);
+	vec3 refl_cam = reflect(cam_to_p, normalize(vs_norm_cam));
+	
+	vec3 col = sky(mat3(cam_to_world) * refl_cam);
+	
+	col *= alb;
+	
+	frag_col = vec4(col, 1);
+	
+	//if (mouse().x < screen().x)	frag_col = vec4( vs_norm_cam, 1 );
+	//else						frag_col = vec4( vs_tang_cam.xyz, 1 );
 }

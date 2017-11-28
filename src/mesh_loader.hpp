@@ -463,6 +463,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 				
 				u.v.pos_model =		transform * poss[t.arr[i].pos -1];
 				u.v.norm_model =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: DEFAULT_NORM;
+				u.v.tang_model =	0;
 				u.v.uv =			t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: DEFAULT_UV;
 				u.v.col =			DEFAULT_COL;
 				

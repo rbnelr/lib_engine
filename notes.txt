@@ -1,6 +1,6 @@
 
 // to generate the glad files this is using use the glad python scrip
-python -m glad --api gl=3.3 --extensions "" --generator c --local-files --out-path out/
+python -m glad --api gl=3.3 --extensions "GL_ARB_debug_output" --generator c --local-files --out-path out/
 
 even in WIP GLFW3.3 does only provide windows raw input (WM_INPUT)
  -not in deltas, but keeps an internal counter for some reason

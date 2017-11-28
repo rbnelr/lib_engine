@@ -42,7 +42,7 @@
 		
 		fprintf(stderr,	ANSI_COLOUR_CODE_RED
 						"dbg_assert failed!\n"
-						"  \"%s\"\n", cond);
+						"  \"%s\"\n  ", cond);
 		
 		va_list vl;
 		va_start(vl, msg_format);

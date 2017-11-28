@@ -234,31 +234,31 @@ struct Uniform {
 	Uniform (data_type t, cstr n): type{t}, name{n} {}
 	
 	void set (f32 v) {
-		dbg_assert(type == T_FLT);
+		dbg_assert(type == T_FLT, "%s", name);
 		glUniform1fv(loc, 1, &v);
 	}
 	void set (v2 v) {
-		dbg_assert(type == T_V2);
+		dbg_assert(type == T_V2, "%s", name);
 		glUniform2fv(loc, 1, &v.x);
 	}
 	void set (v3 v) {
-		dbg_assert(type == T_V3);
+		dbg_assert(type == T_V3, "%s", name);
 		glUniform3fv(loc, 1, &v.x);
 	}
 	void set (v4 v) {
-		dbg_assert(type == T_V4);
+		dbg_assert(type == T_V4, "%s", name);
 		glUniform4fv(loc, 1, &v.x);
 	}
 	void set (iv2 v) {
-		dbg_assert(type == T_IV2);
+		dbg_assert(type == T_IV2, "%s", name);
 		glUniform2iv(loc, 1, &v.x);
 	}
 	void set (m3 v) {
-		dbg_assert(type == T_M3);
+		dbg_assert(type == T_M3, "%s", name);
 		glUniformMatrix3fv(loc, 1, GL_FALSE, &v.arr[0][0]);
 	}
 	void set (m4 v) {
-		dbg_assert(type == T_M4);
+		dbg_assert(type == T_M4, "%s", name);
 		glUniformMatrix4fv(loc, 1, GL_FALSE, &v.arr[0][0]);
 	}
 };
@@ -307,22 +307,23 @@ struct Shader {
 		auto frag_filepath = prints("shaders/%s", frag_filename);
 		
 		bool res = load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
-		get_uniform_locations();
-		setup_uniform_textures();
+		get_uniform_locations(*out);
+		setup_uniform_textures(*out);
 		return res;
 	}
 	
-	void get_uniform_locations () {
+	void get_uniform_locations (GLuint prog) {
 		for (auto& u : uniforms) {
 			u.loc = glGetUniformLocation(prog, u.name);
 			//if (u.loc <= -1) log_warning("Uniform not valid %s!", u.name);
 		}
 	}
 	
-	void setup_uniform_textures () {
+	void setup_uniform_textures (GLuint prog) {
+		glUseProgram(prog);
 		for (auto& t : textures) {
 			t.loc = glGetUniformLocation(prog, t.name);
-			//if (t.loc <= -1) log_warning("Uniform Texture not valid %s!", t.name);
+			//if (t.loc <= -1) log_warning("Uniform Texture not valid '%s'!", t.name);
 			glUniform1i(t.loc, t.tex_unit);
 		}
 	}
@@ -394,26 +395,30 @@ struct Vertex_Layout {
 			GLint loc = glGetAttribLocation(shad->prog, a.name);
 			//if (loc <= -1) log_warning("Attribute %s is not used in the shader!", a.name);
 			
-			glEnableVertexAttribArray(loc);
-			
-			GLint comps = 1;
-			GLenum type = GL_FLOAT;
-			switch (a.type) {
-				case T_FLT:	comps = 1;	type = GL_FLOAT;	break;
-				case T_V2:	comps = 2;	type = GL_FLOAT;	break;
-				case T_V3:	comps = 3;	type = GL_FLOAT;	break;
-				case T_V4:	comps = 4;	type = GL_FLOAT;	break;
+			if (loc != -1) {
+				dbg_assert(loc > -1);
 				
-				case T_INT:	comps = 1;	type = GL_INT;		break;
-				case T_IV2:	comps = 2;	type = GL_INT;		break;
-				case T_IV3:	comps = 3;	type = GL_INT;		break;
-				case T_IV4:	comps = 4;	type = GL_INT;		break;
+				glEnableVertexAttribArray(loc);
 				
-				default: dbg_assert(false);
+				GLint comps = 1;
+				GLenum type = GL_FLOAT;
+				switch (a.type) {
+					case T_FLT:	comps = 1;	type = GL_FLOAT;	break;
+					case T_V2:	comps = 2;	type = GL_FLOAT;	break;
+					case T_V3:	comps = 3;	type = GL_FLOAT;	break;
+					case T_V4:	comps = 4;	type = GL_FLOAT;	break;
+					
+					case T_INT:	comps = 1;	type = GL_INT;		break;
+					case T_IV2:	comps = 2;	type = GL_INT;		break;
+					case T_IV3:	comps = 3;	type = GL_INT;		break;
+					case T_IV4:	comps = 4;	type = GL_INT;		break;
+					
+					default: dbg_assert(false);
+				}
+				
+				glVertexAttribPointer(loc, comps, type, GL_FALSE, a.stride, (void*)a.offs);
+				
 			}
-			
-			glVertexAttribPointer(loc, comps, type, GL_FALSE, a.stride, (void*)a.offs);
-			
 		}
 	}
 };

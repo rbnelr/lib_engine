@@ -100,6 +100,7 @@ static Texture2D* new_texture2d (cstr filename) {
 struct Mesh_Vertex {
 	v3	pos_model;
 	v3	norm_model;
+	v4	tang_model;
 	v2	uv;
 	v3	col;
 	
@@ -109,12 +110,14 @@ struct Mesh_Vertex {
 	}
 };
 static constexpr v3 DEFAULT_NORM =	0;
+static constexpr v4 DEFAULT_TANG =	0;
 static constexpr v2 DEFAULT_UV =	0.5f;
 static constexpr v3 DEFAULT_COL =	1;
 
 static Vertex_Layout mesh_vert_layout = {
-	{ "pos_world",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
-	{ "norm_world",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
+	{ "pos_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
+	{ "norm_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
+	{ "tang_model",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tang_model) },
 	{ "uv",			T_V2, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, uv) },
 	{ "col",		T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, col) }
 };
@@ -207,7 +210,7 @@ struct Mesh {
 	void reload () {
 		vbo.clear();
 		
-		auto t = get_transform();
+		auto t = hm::ident();
 		
 		switch (type) {
 			case MT_FILE: {
@@ -459,22 +462,27 @@ int main (int argc, char** argv) {
 		glEnable(GL_CULL_FACE);
 		glCullFace(GL_BACK);
 		glFrontFace(GL_CCW);
+		
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		
 	}
 	
 	//
 	
 	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
+	#define UMAT UM4("model_to_world"), UM4("world_to_cam"), UM4("cam_to_clip"), UM4("cam_to_world") // transformation uniforms
 	
 	auto* shad_skybox =				new_shader("skybox.vert",		"skybox.frag",		{UCOM, UM4("skybox_to_clip")});
-	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",	{UCOM, UV2("tex_dim")}, {{0,"tex"}});
+	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",	{UCOM, UV2("tex_dim")}, {{0,"tex0"}});
 	
-	auto* tex_test =				new_texture2d("test.png");
+	auto* tex_test =				new_texture2d("fast.png");
 	
 	{
 		
 		
-		auto* shad =				new_shader("test.vert",			"test.frag",		{UCOM, UM4("world_to_clip")});
-		auto* shad2 =				new_shader("normals.vert",		"normals.frag",		{UCOM, UM4("world_to_clip")});
+		auto* shad =				new_shader("test.vert",			"test.frag",		{UCOM, UMAT});
+		auto* shad2 =				new_shader("normals.vert",		"normals.frag",		{UCOM, UMAT});
 		
 		new_gen_tile_floor("tile_floor",	shad);
 		new_gen_tetrahedron("tetrahedron",	shad,			v3(+2,+2,0),	rotate3_Z(deg(13)),		1.0f / (1 +1.0f/3));
@@ -487,9 +495,13 @@ int main (int argc, char** argv) {
 		new_mesh("nier",					shad2,			v3(-4,-2,0),	rotate3_Z(deg(90)),		"nier_models_test.obj");
 		
 		auto* tex_cerb_albedo =		new_texture2d("cerberus/Cerberus_A.tga");
-		auto* shad_diffuse =		new_shader("diffuse.vert",		"diffuse.frag",	{UCOM, UM4("world_to_clip")}, {{0,"albedo"}});
+		auto* tex_cerb_normal =		new_texture2d("cerberus/Cerberus_N.tga");
+		auto* tex_cerb_metallic =	new_texture2d("cerberus/Cerberus_M.tga");
+		auto* tex_cerb_roughness =	new_texture2d("cerberus/Cerberus_R.tga");
 		
-		new_mesh("cerberus",				shad_diffuse, v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}});
+		auto* shad_cerb =		new_shader("cerberus.vert", "cerberus.frag",	{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"metallic"}, {3,"roughness"}});
+		
+		new_mesh("cerberus",				shad_cerb, v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
 	}
 	
 	// 
@@ -542,7 +554,9 @@ int main (int argc, char** argv) {
 			return v2(mcursor_pos_px.x, wnd_dim.y -mcursor_pos_px.y);
 		};
 		
-		m4 world_to_clip;
+		hm world_to_cam;
+		hm cam_to_world;
+		m4 cam_to_clip;
 		m4 skybox_to_clip;
 		{
 			{
@@ -567,9 +581,9 @@ int main (int argc, char** argv) {
 				
 				//printf(">>> %f %f %f\n", cam_vel_cam.x, cam_vel_cam.y, cam_vel_cam.z);
 			}
-			m4 world_to_cam = world_to_cam_rot * translate4(-cam.pos_world);
+			world_to_cam = world_to_cam_rot * translateH(-cam.pos_world);
+			cam_to_world =translateH(cam.pos_world) * cam_to_world_rot;
 			
-			m4 cam_to_clip;
 			{
 				f32 vfov =			cam.vfov;
 				f32 clip_near =		1.0f/16;
@@ -593,16 +607,16 @@ int main (int argc, char** argv) {
 								0, 0, -1, 0 );
 			}
 			
-			world_to_clip = cam_to_clip * world_to_cam;
 			skybox_to_clip = cam_to_clip * world_to_cam_rot;
 		}
 		
-		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
-		
 		for (auto* s : g_shaders) {
+			s->bind();
 			s->set_unif("screen_dim", (v2)wnd_dim);
 			s->set_unif("mcursor_pos", bottom_up_mcursor_pos());
 		}
+		
+		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
 		if (1) { // draw skybox
 			glDisable(GL_DEPTH_TEST);
@@ -624,18 +638,28 @@ int main (int argc, char** argv) {
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
 		for (auto* m : g_meshes) {
+			
+			hm model_to_world = m->get_transform();
+			
 			m->shad->bind();
-			m->shad->set_unif("world_to_clip", world_to_clip);
+			m->shad->set_unif("model_to_world", model_to_world.m4());
+			m->shad->set_unif("world_to_cam", world_to_cam.m4());
+			m->shad->set_unif("cam_to_clip", cam_to_clip);
+			m->shad->set_unif("cam_to_world", cam_to_world.m4());
 			
 			for (auto& t : m->textures) t.bind();
 			
 			m->vbo.draw_entire(m->shad);
 		}
 		
+		glEnable(GL_DEPTH_TEST);
+		
 		shad_overlay_tex->bind();
-		shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim);
+		shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim / 4);
 		bind_texture_unit(0, tex_test);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
+		
+		glDisable(GL_DEPTH_TEST);
 		
 		glfwSwapBuffers(wnd);
 		
