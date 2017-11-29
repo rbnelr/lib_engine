@@ -12,21 +12,21 @@ static void gen_tetrahedron (std::vector<byte>* data, hm transform, f32 r) {
 	
 	auto out = (Mesh_Vertex*)&*vector_append(data, 4*3 * sizeof(Mesh_Vertex));
 	
-	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,0,0) };
-	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,0,1) };
-	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,1,0) };
+	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,0,0,1) };
+	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,0,1,1) };
+	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,1,0,1) };
 	
-	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,0,0) };
-	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,1,0) };
-	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,1,1) };
+	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,0,0,1) };
+	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,1,0,1) };
+	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,1,1,1) };
 	
-	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,1,0) };
-	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,0,1) };
-	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,1,1) };
+	*out++ = { transform * (r*v3(COS_120,	SIN_120,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,1,0,1) };
+	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,0,1,1) };
+	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,1,1,1) };
 	
-	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(0,0,1) };
-	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,0,0) };
-	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v3(1,1,1) };
+	*out++ = { transform * (r*v3(COS_240,	SIN_240,	-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(0,0,1,1) };
+	*out++ = { transform * (r*v3(COS_0,		SIN_0,		-1.0f/3)),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,0,0,1) };
+	*out++ = { transform * (r*v3(0,			0,			+1.0f)	),	DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(1,1,1,1) };
 	
 	dbg_assert(out == (Mesh_Vertex*)(data->data() +data->size())); // check size calculation above
 }
@@ -37,12 +37,12 @@ static void gen_cube (std::vector<byte>* data, hm transform, f32 r) {
 	auto out = (Mesh_Vertex*)&*vector_append(data, 6*6 * sizeof(Mesh_Vertex));
 	
 	auto quad = [&] (v3 a, v3 b, v3 c, v3 d) {
-		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, b/2+0.5f };
-		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (r*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, d/2+0.5f };
+		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(b/2+0.5f,1) };
+		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (r*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(d/2+0.5f,1) };
 	};
 	
 	v3 LLL = v3(-1,-1,-1);
@@ -93,17 +93,17 @@ static void gen_cylinder (std::vector<byte>* data, hm transform, f32 r, f32 l, u
 	auto out = (Mesh_Vertex*)&*vector_append(data, faces*(3 +6 +3) * sizeof(Mesh_Vertex));
 	
 	auto quad = [&] (v3 a, v3 b, v3 c, v3 d) {
-		*out++ = { transform * (v3(r,r,l/2)*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, b/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, d/2+0.5f };
+		*out++ = { transform * (v3(r,r,l/2)*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(b/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(d/2+0.5f,1) };
 	};
 	auto tri = [&] (v3 a, v3 b, v3 c) {
-		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, b/2+0.5f };
-		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
+		*out++ = { transform * (v3(r,r,l/2)*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(b/2+0.5f,1) };
+		*out++ = { transform * (v3(r,r,l/2)*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
 	};
 	
 	for (u32 i=0; i<faces; ++i) {
@@ -133,17 +133,17 @@ static void gen_iso_sphere (std::vector<byte>* data, hm transform, f32 r, u32 wf
 	auto out = (Mesh_Vertex*)&*vector_append(data, ((hfaces-2)*wfaces*6 +2*wfaces*3) * sizeof(Mesh_Vertex));
 	
 	auto quad = [&] (v3 a, v3 b, v3 c, v3 d) {
-		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, b/2+0.5f };
-		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
-		*out++ = { transform * (r*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, d/2+0.5f };
+		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(b/2+0.5f,1) };
+		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
+		*out++ = { transform * (r*d), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(d/2+0.5f,1) };
 	};
 	auto tri = [&] (v3 a, v3 b, v3 c) {
-		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, a/2+0.5f };
-		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, b/2+0.5f };
-		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, c/2+0.5f };
+		*out++ = { transform * (r*a), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(a/2+0.5f,1) };
+		*out++ = { transform * (r*b), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(b/2+0.5f,1) };
+		*out++ = { transform * (r*c), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, v4(c/2+0.5f,1) };
 	};
 	
 	for (u32 j=0; j<hfaces; ++j) {
@@ -185,7 +185,7 @@ static void gen_tile_floor (std::vector<byte>* data) {
 	
 	auto emit_quad = [&] (v3 pos, bool checker) {
 		if (checker) {
-			v3 col = 0 ? srgb(224,226,228) : srgb(41,49,52);
+			v4 col = v4(0 ? srgb(224,226,228) : srgb(41,49,52), 1);
 			*out++ = { pos +v3(+0.5f,-0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
 			*out++ = { pos +v3(+0.5f,+0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
 			*out++ = { pos +v3(-0.5f,-0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };

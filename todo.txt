@@ -53,6 +53,11 @@ DONE:
 #2017.11.28 di. tag
  switched to space transformations happening in vertex shader for maximum flexibility
  
+#2017.11.29 mi. tag
+ implemented tangent generation based on delta uv in mesh
+ 
+ implemented and debugged normal mapping
+ 
 TODO
 -FEATURES:
  

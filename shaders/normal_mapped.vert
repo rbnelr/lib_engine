@@ -4,13 +4,13 @@ in		vec3	pos_model;
 in		vec3	norm_model;
 in		vec4	tang_model;
 in		vec2	uv;
-in		vec3	col;
+in		vec4	col;
 
 out		vec3	vs_pos_cam;
 out		vec3	vs_norm_cam;
 out		vec4	vs_tang_cam;
 out		vec2	vs_uv;
-out		vec3	vs_col;
+out		vec4	vs_col;
 
 uniform	mat4	model_to_world;
 uniform	mat4	world_to_cam;

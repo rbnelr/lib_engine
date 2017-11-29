@@ -9,8 +9,8 @@
 #define BOOLVEC	1
 	
 	#include "vector_tv2.hpp"
-	//#include "vector_tv3.hpp"
-	//#include "vector_tv4.hpp"
+	#include "vector_tv3.hpp"
+	#include "vector_tv4.hpp"
 	
 #undef T
 #undef V2

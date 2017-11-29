@@ -144,37 +144,44 @@ static void unload_program (GLuint prog) {
 
 #include "stb_image.h"
 
-static u8* load_texture2d_rgba8 (cstr filepath, iv2* dim) {
+static u8* load_texture2d (cstr filepath, iv2* dim, ui* bbp) {
 	stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
 	int n;
-	return stbi_load(filepath, &dim->x, &dim->y, &n, 4);
+	u8* data = stbi_load(filepath, &dim->x, &dim->y, &n, 0);
+	*bbp = (ui)n * 8;
+	return data;
 }
 
+enum tex_type {
+	TEX_TYPE_SRGB_A		=0,
+	TEX_TYPE_LIN_RGB	,
+};
+
 struct Texture2D {
-	GLuint	tex;
-	iv2		dim;
+	GLuint		tex;
+	iv2			dim;
+	tex_type	type;
 	
-	cstr	filename;
+	cstr		filename;
+	
+	GLenum		internalFormat;
+	GLenum		format;
 	
 	#if RZ_AUTO_FILE_RELOADING
 	File_Change_Poller	fc;
 	#endif
 	
-	void init_load (cstr filename_) {
-		filename = filename_;
+	void init_load (cstr fn, tex_type t) {
+		filename = fn;
+		type = t;
 		
 		glGenTextures(1, &tex);
 		glBindTexture(GL_TEXTURE_2D, tex);
 		
 		auto filepath = prints("assets_src/textures/%s", filename);
 		
-		auto* data = load_texture2d_rgba8(filepath.c_str(), &dim);
-		if (!data) {
+		if (!reload(filepath)) {
 			log_warning_asset_load(filepath.c_str());
-		} else {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, dim.x,dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-			
-			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 		
 		#if RZ_AUTO_FILE_RELOADING
@@ -187,23 +194,86 @@ struct Texture2D {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	}
 	
+	bool reload (std::string filepath) {
+		
+		#if 0
+		std::string ext;
+		std::string type_ext;
+		{
+			ui i = 0;
+			std::string* exts[2] = { &ext, &type_ext };
+			
+			auto end = filepath.end();
+			
+			for (auto c = filepath.end(); c != filepath.begin();) { --c;
+				if (*c == '.') {
+					*exts[i] = std::string(c +1, end);
+					
+					end = c;
+					
+					++i;
+					if (i == 2) break;
+				}
+			}
+		}
+		
+		printf(">>> '%s' -> '%s' '%s'\n", filepath.c_str(), type_ext.c_str(), ext.c_str());
+		#endif
+		
+		ui bbp;
+		auto* data = load_texture2d(filepath.c_str(), &dim, &bbp);
+		
+		internalFormat = 0;
+		format = 0;
+		
+		switch (bbp) {
+			case 32:	format = GL_RGBA;	break;
+			case 24:	format = GL_RGB;	break;
+			
+			default: dbg_assert(false);
+		}
+		
+		switch (type) {
+			case TEX_TYPE_SRGB_A:
+				switch (bbp) {
+					case 32:	internalFormat = GL_SRGB8_ALPHA8;	break;
+					case 24:	internalFormat = GL_SRGB8;			break;
+					
+					default: dbg_assert(false);
+				} break;
+			
+			case TEX_TYPE_LIN_RGB:
+				switch (bbp) {
+					case 32:	internalFormat = GL_RGBA8;
+						log_warning("Texture2D:: RGBA image loaded as TEX_TYPE_LIN_RGB.");
+						break;
+					case 24:	internalFormat = GL_RGB;	break;
+					
+					default: dbg_assert(false);
+				} break;
+			
+			default: dbg_assert(false);
+		}
+		
+		if (data) {
+			glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, dim.x,dim.y, 0, format, GL_UNSIGNED_BYTE, data);
+			
+			glGenerateMipmap(GL_TEXTURE_2D);
+		}
+		
+		return data != nullptr;
+	}
+	
 	bool reload_if_needed () {
 		#if RZ_AUTO_FILE_RELOADING
 		auto filepath = prints("assets_src/textures/%s", filename);
 		
-		bool reload = fc.poll_did_change(filepath.c_str());
-		if (!reload) return false;
+		bool reloaded = fc.poll_did_change(filepath.c_str());
+		if (!reloaded) return false;
 		
 		printf("texture source file changed, reloading \"%s\".\n", filepath.c_str());
 		
-		auto* data = load_texture2d_rgba8(filepath.c_str(), &dim);
-		if (!data) return false;
-		
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, dim.x,dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-		
-		glGenerateMipmap(GL_TEXTURE_2D);
-		
-		return true;
+		return reload(filepath);
 		#else
 		return false;
 		#endif

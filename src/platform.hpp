@@ -78,11 +78,7 @@ static void glfw_error_proc (int err, const char* msg) {
 
 static void APIENTRY ogl_debug_proc (GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, cstr message, void const* userParam) {
 	
-	/*
-	if (source == GL_DEBUG_SOURCE_SHADER_COMPILER_ARB) {
-		return;
-	}
-	*/
+	//if (source == GL_DEBUG_SOURCE_SHADER_COMPILER_ARB) return;
 	
 	switch (id) {
 		case 131185: // Buffer detailed info (where the memory lives which is supposed to depend on the usage hint)

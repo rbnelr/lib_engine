@@ -244,9 +244,16 @@ namespace std {
 			return	hash<f32>()(v.x) ^ hash<f32>()(v.y) ^ hash<f32>()(v.z);
 		}
 	};
+	template<> struct hash<v4> {
+		size_t operator() (v4 const& v) const {
+			return	hash<f32>()(v.x) ^ hash<f32>()(v.y) ^ hash<f32>()(v.z) ^ hash<f32>()(v.w);
+		}
+	};
 	template<> struct hash<Mesh_Vertex> {
 		size_t operator() (Mesh_Vertex const& v) const {
-			return hash<v3>()(v.pos_model) ^ hash<v3>()(v.norm_model) ^ hash<v2>()(v.uv) ^ hash<v3>()(v.col);
+			// tangents are not calculated at this point (we always calculate the ourself)
+			dbg_assert(all(v.tang_model == DEFAULT_TANG));
+			return hash<v3>()(v.pos_model) ^ hash<v3>()(v.norm_model) ^ hash<v2>()(v.uv) ^ hash<v4>()(v.col);
 		}
 	};
 }
@@ -445,6 +452,14 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 		}
 	}
 	
+	bool file_has_norm =	norms.size() != 0;
+	bool file_has_uv =		uvs.size() != 0;
+	bool file_has_col =		false; // .obj does not have vertex color
+	
+	if (!file_has_norm) {
+		log_warning("mesh_loader:: Mesh '%s' has no normal data, we do not support generating the normals ourself!");
+	}
+	
 	{ // expand triangles from individually indexed poss/uvs/norms to non-indexed
 		vbo->vertecies.reserve( tris.size() * 3 * sizeof(Mesh_Vertex) ); // vertecies are stored as a genric byte array
 																		 // this is the max possible size
@@ -461,11 +476,19 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 					U () {}
 				} u;
 				
-				u.v.pos_model =		transform * poss[t.arr[i].pos -1];
-				u.v.norm_model =	t.arr[i].norm ?	normalize(norms[t.arr[i].norm -1])	: DEFAULT_NORM;
-				u.v.tang_model =	0;
-				u.v.uv =			t.arr[i].uv ?	uvs[t.arr[i].uv -1]					: DEFAULT_UV;
-				u.v.col =			DEFAULT_COL;
+				bool tri_has_pos =	t.arr[i].pos != 0;
+				bool tri_has_norm =	t.arr[i].norm != 0;
+				bool tri_has_uv =	t.arr[i].uv != 0;
+				
+				dbg_assert(tri_has_pos);
+				dbg_assert(tri_has_norm == file_has_norm);
+				dbg_assert(tri_has_uv == file_has_uv);
+				
+				u.v.pos_model =		tri_has_pos ?	transform * poss[t.arr[i].pos -1]	:	DEFAULT_POS;
+				u.v.norm_model =	tri_has_norm ?	normalize(norms[t.arr[i].norm -1])	:	DEFAULT_NORM;
+				u.v.tang_model =															DEFAULT_TANG;
+				u.v.uv =			tri_has_uv ?	uvs[t.arr[i].uv -1]					:	DEFAULT_UV;
+				u.v.col =																	DEFAULT_COL;
 				
 				auto entry = unique.find(u.v);
 				bool is_unique = entry == unique.end();
@@ -485,6 +508,149 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 					
 				}
 			}
+		}
+	}
+	
+	if (file_has_norm && file_has_uv) { // calc tangents
+		
+		// First determine which triangles are connected for each vertex
+		// And calculate the tangent and bitangent of each triangle at the same time
+		struct Connected_Tri {
+			vert_indx_t		tri_i;
+			Connected_Tri*	next;
+		};
+		
+		auto** vert_conn_tris = (Connected_Tri**)malloc( vbo->vertecies.size() * sizeof(Connected_Tri*) );
+		defer { free(vert_conn_tris); };
+		memset(vert_conn_tris, 0, vbo->vertecies.size() * sizeof(Connected_Tri*));
+		
+		struct TB {
+			v3		tang;
+			v3		bitang;
+			
+			bool	degenerate;
+			
+			Connected_Tri	conn[3];
+		};
+		
+		auto* tri_tangents = (TB*)malloc( tris.size() * sizeof(TB) );
+		defer { free(tri_tangents); };
+		
+		auto vert = (Mesh_Vertex*)vbo->vertecies.data();
+		
+		for (vert_indx_t tri_i=0; tri_i<tris.size(); ++tri_i) {
+			
+			v3 pos[3];
+			v2 uv[3];
+			
+			for (ui i=0; i<3; ++i) {
+				
+				auto indx = vbo->indices[ tri_i*3 +i ];
+				
+				{ // Insert our tri_i at the front of the list of connected triangles that starts at vert_conn_tris[indx] 
+					auto* conn = vert_conn_tris[indx];
+					
+					auto* new_conn = &tri_tangents[tri_i].conn[i];
+					new_conn->tri_i = tri_i;
+					new_conn->next = conn;
+					
+					vert_conn_tris[indx] = new_conn;
+				}
+				
+				pos[i] =	vert[indx].pos_model;
+				uv[i] =		vert[indx].uv;
+			}
+			
+			tri_tangents[tri_i].degenerate = false;
+			
+			// Calculate trangent and bitangent from delta uv
+			v3 e0 = pos[1] -pos[0];
+			v3 e1 = pos[2] -pos[0];
+			
+			if (all(e0 == 0) || all(e1 == 0)) {
+				//log_warning("mesh_loader:: Degenerate triangle [%llu] in mesh '%s'!", tri_i, filepath);
+				tri_tangents[tri_i].degenerate = true;
+			}
+			
+			f32 du0 = uv[1].x -uv[0].x;
+			f32 dv0 = uv[1].y -uv[0].y;
+			f32 du1 = uv[2].x -uv[0].x; 
+			f32 dv1 = uv[2].y -uv[0].y; 
+			
+			f32 f_denom = (du0 * dv1) -(du1 * dv0);
+			
+			if (f_denom == 0) {
+				//log_warning("mesh_loader:: Degenerate uv map triangle [%llu] in mesh '%s'!", tri_i, filepath);
+				tri_tangents[tri_i].degenerate = true;
+			}
+			
+			f32 f = 1.0f / f_denom;
+			
+			v3 tang = v3(f) * ((v3(dv1) * e0) -(v3(dv0) * e1));
+			v3 bitang = v3(f) * ((v3(du0) * e1) -(v3(du1) * e0));
+			
+			tang = normalize(tang);
+			bitang = normalize(bitang);
+			
+			tri_tangents[tri_i].tang = tang;
+			tri_tangents[tri_i].bitang = bitang;
+		}
+		
+		auto calc_bitang_sign = [&] (v3 tang, v3 bitang, v3 norm) -> f32 {
+			return dot(cross(norm, tang), bitang) < 0 ? -1.0f : +1.0f;
+		};
+		
+		for (vert_indx_t v_i=0; v_i<vbo->vertecies.size()/sizeof(Mesh_Vertex); ++v_i) {
+			
+			vert_indx_t count = 0;
+			v3 total_tang = 0;
+			v3 total_bitang = 0;
+			
+			{
+				dbg_assert(vert_conn_tris[v_i]);
+				auto* cur = vert_conn_tris[v_i];
+				
+				do {
+					if (!tri_tangents[cur->tri_i].degenerate) {
+						v3 t = tri_tangents[cur->tri_i].tang;
+						v3 b = tri_tangents[cur->tri_i].bitang;
+						
+						dbg_assert(all(t >= -1.01f && t <= 1.01f) && all(b >= -1.01f && b <= 1.01f));
+						
+						total_tang +=	t;
+						total_bitang +=	b;
+						
+						++count;
+					}
+					
+					cur = cur->next;
+				} while (cur);
+			}
+			
+			if (count == 0) {
+				//log_warning("mesh_loader:: Vertex was part of only degenerate triangles [%llu] in mesh '%s'!", v_i, filepath);
+				vert[v_i].tang_model = DEFAULT_TANG;
+				//vert[v_i].col *= v4(1,1,0,1);
+			} else {
+				// average tangent and bitangent
+				v3 avg_tang = total_tang / (f32)count;
+				v3 avg_bitang = total_bitang / (f32)count;
+				
+				if (length(avg_tang) < 0.05f || length(avg_bitang) < 0.05f) { // vectors could cancel out
+					//log_warning();
+					//vert[v_i].col *= v4(0,1,0,1);
+				}
+				
+				avg_tang = normalize(avg_tang);
+				avg_bitang = normalize(avg_bitang);
+				
+				v3 norm = vert[v_i].norm_model;
+				
+				f32 bitang_sign = calc_bitang_sign(avg_tang, avg_bitang, norm);
+				
+				vert[v_i].tang_model = v4(avg_tang, bitang_sign);
+			}
+			
 		}
 		
 	}
