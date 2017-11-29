@@ -17,6 +17,6 @@ const vec2 arr[6] = vec2[] (
 );
 
 void main () {
-	gl_Position =		vec4((arr[gl_VertexID] * tex_dim/screen_dim) * 2 -1, 0,1);
+	gl_Position =		vec4((arr[gl_VertexID] * tex_dim/screen_dim) / 4 * 2 -1, 0,1);
 	vs_uv =				arr[gl_VertexID];
 }

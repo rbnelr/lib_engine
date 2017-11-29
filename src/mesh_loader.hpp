@@ -251,11 +251,21 @@ namespace std {
 	};
 	template<> struct hash<Mesh_Vertex> {
 		size_t operator() (Mesh_Vertex const& v) const {
-			// tangents are not calculated at this point (we always calculate the ourself)
+			// tangents are not calculated at this point (we always calculate them ourself)
 			dbg_assert(all(v.tang_model == DEFAULT_TANG));
-			return hash<v3>()(v.pos_model) ^ hash<v3>()(v.norm_model) ^ hash<v2>()(v.uv) ^ hash<v4>()(v.col);
+			return	hash<v3>()(v.pos_model) ^
+					hash<v3>()(v.norm_model) ^
+					hash<v2>()(v.uv) ^
+					hash<v4>()(v.col);
 		}
 	};
+}
+
+bool Mesh_Vertex::operator== (Mesh_Vertex const& r) const {
+	return	all(pos_model == r.pos_model) &&
+			all(norm_model == r.norm_model) &&
+			all(uv == r.uv) &&
+			all(col == r.col);
 }
 
 static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {

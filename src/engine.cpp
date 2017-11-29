@@ -3,13 +3,10 @@
 #include <vector>
 #include <string>
 
-
 #include "types.hpp"
 #include "lang_helpers.hpp"
 #include "math.hpp"
-#define static static NOINLINE
 #include "vector/vector.hpp"
-#undef static
 
 typedef s32v2	iv2;
 typedef s32v3	iv3;
@@ -91,41 +88,22 @@ static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std
 	return s;
 }
 
-static Texture2D* new_texture2d (cstr filename) {
+static Texture2D* new_texture2d (cstr filename, tex_type type=TEX_TYPE_SRGB_A) {
 	Texture2D* t = new Texture2D;
 	g_textures.push_back(t);
-	t->init_load(filename, TEX_TYPE_SRGB_A);
-	return t;
-}
-static Texture2D* new_texture2d_linear (cstr filename) {
-	Texture2D* t = new Texture2D;
-	g_textures.push_back(t);
-	t->init_load(filename, TEX_TYPE_LIN_RGB);
+	t->init_load(filename, type);
 	return t;
 }
 
 //
 struct Mesh_Vertex {
-	v4	tang_model;
-	
 	v3	pos_model;
 	v3	norm_model;
-	//v4	tang_model;
+	v4	tang_model;
 	v2	uv;
 	v4	col;
 	
-	Mesh_Vertex (v3 p, v3 n, v4 t, v2 u, v4 c) {
-		pos_model =		p;
-		norm_model =	n;
-		tang_model =	t;
-		uv =			u;
-		col =			c;
-	}
-	
-	bool operator== (Mesh_Vertex const& r) const {
-		//return all(pos == r.pos) && all(norm == r.norm) && all(uv == r.uv) && all(col == r.col);
-		return memcmp(this, &r, sizeof(Mesh_Vertex)) == 0;
-	}
+	bool operator== (Mesh_Vertex const& r) const; // for hash map
 };
 static constexpr v3 DEFAULT_POS =	0;
 static constexpr v3 DEFAULT_NORM =	0;
@@ -498,28 +476,28 @@ int main (int argc, char** argv) {
 	auto* tex_test =				new_texture2d("fast.png");
 	
 	{
-		auto* shad_vc =				new_shader("vertex_color.vert",	"vertex_color.frag",	{UCOM, UMAT});
-		auto* shad2 =				new_shader("normals.vert",		"normals.frag",			{UCOM, UMAT});
-		auto* shad_norm =			new_shader("normal_mapped.vert", "normal_mapped.frag",	{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"metallic"}, {3,"roughness"}});
+		auto* shad_vc =				new_shader("mesh_vertex.vert",	"vertex_color.frag",	{UCOM, UMAT});
+		auto* shad2 =				new_shader("mesh_vertex.vert",	"normals.frag",			{UCOM, UMAT});
+		auto* shad_norm =			new_shader("mesh_vertex.vert",	"normal_mapped.frag",	{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"metallic"}, {3,"roughness"}});
 		
 		
 		new_gen_tile_floor("tile_floor",	shad_vc);
-		new_gen_tetrahedron("tetrahedron",	shad_vc,		v3(+2,+2,0),	rotate3_Z(deg(13)),		1.0f / (1 +1.0f/3));
-		new_gen_cube("cube",				shad_vc,		v3( 0,+2,0),	rotate3_Z(deg(37)),		0.5f);
-		new_gen_cylinder("cylinder",		shad_vc,		v3(-2,+2,0),	m3::ident(),			0.5f, 2, 24);
-		new_gen_iso_sphere("iso_sphere",	shad_vc,		v3(-3, 0,0),	m3::ident(),			0.5f, 64, 32);
+		new_gen_tetrahedron("tetrahedron",	shad_vc,	v3(+2,+2,0),	rotate3_Z(deg(13)),		1.0f / (1 +1.0f/3));
+		new_gen_cube("cube",				shad_vc,	v3( 0,+2,0),	rotate3_Z(deg(37)),		0.5f);
+		new_gen_cylinder("cylinder",		shad_vc,	v3(-2,+2,0),	m3::ident(),			0.5f, 2, 24);
+		new_gen_iso_sphere("iso_sphere",	shad_vc,	v3(-3, 0,0),	m3::ident(),			0.5f, 64, 32);
 		
-		new_mesh("pedestal",				shad2,			v3(3,0,0),		rotate3_Z(deg(-70)),	"pedestal.obj");
-		new_mesh("multi_obj_test",			shad2,			v3(10,0,0),		rotate3_Z(deg(-78)),	"multi_obj_test.obj");
+		new_mesh("pedestal",				shad2,		v3(3,0,0),		rotate3_Z(deg(-70)),	"pedestal.obj");
+		new_mesh("multi_obj_test",			shad2,		v3(10,0,0),		rotate3_Z(deg(-78)),	"multi_obj_test.obj");
 		
-		auto* tex_cerb_albedo =		new_texture2d(			"cerberus/Cerberus_A.tga");
-		auto* tex_cerb_normal =		new_texture2d_linear(	"cerberus/Cerberus_N.tga");
-		auto* tex_cerb_metallic =	new_texture2d(			"cerberus/Cerberus_M.tga");
-		auto* tex_cerb_roughness =	new_texture2d(			"cerberus/Cerberus_R.tga");
+		auto* tex_cerb_albedo =		new_texture2d("cerberus/Cerberus_A.tga");
+		auto* tex_cerb_normal =		new_texture2d("cerberus/Cerberus_N.tga", TEX_TYPE_LIN_RGB);
+		auto* tex_cerb_metallic =	new_texture2d("cerberus/Cerberus_M.tga");
+		auto* tex_cerb_roughness =	new_texture2d("cerberus/Cerberus_R.tga");
 		
-		new_mesh("cerberus",				shad_norm, v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
+		new_mesh("cerberus",				shad_norm,	v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
 		
-		new_mesh("nier",					shad_norm,		v3(-4,-2,0),	rotate3_Z(deg(90)),		"nier_models_test.obj");
+		new_mesh("nier",					shad_norm,	v3(-4,-2,0),	rotate3_Z(deg(90)),		"nier_models_test.obj");
 		
 	}
 	
@@ -661,24 +639,26 @@ int main (int argc, char** argv) {
 			hm model_to_world = m->get_transform();
 			
 			m->shad->bind();
-			m->shad->set_unif("model_to_world", model_to_world.m4());
-			m->shad->set_unif("world_to_cam", world_to_cam.m4());
-			m->shad->set_unif("cam_to_clip", cam_to_clip);
-			m->shad->set_unif("cam_to_world", cam_to_world.m4());
+			m->shad->set_unif("model_to_world",	model_to_world.m4());
+			m->shad->set_unif("world_to_cam",	world_to_cam.m4());
+			m->shad->set_unif("cam_to_clip",	cam_to_clip);
+			m->shad->set_unif("cam_to_world",	cam_to_world.m4());
 			
 			for (auto& t : m->textures) t.bind();
 			
 			m->vbo.draw_entire(m->shad);
 		}
 		
-		glDisable(GL_DEPTH_TEST);
-		
-		shad_overlay_tex->bind();
-		shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim / 4);
-		bind_texture_unit(0, tex_test);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		
-		glEnable(GL_DEPTH_TEST);
+		{
+			glDisable(GL_DEPTH_TEST);
+			
+			shad_overlay_tex->bind();
+			shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim);
+			bind_texture_unit(0, tex_test);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+			
+			glEnable(GL_DEPTH_TEST);
+		}
 		
 		glfwSwapBuffers(wnd);
 		

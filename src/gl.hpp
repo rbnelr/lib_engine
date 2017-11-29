@@ -1,4 +1,90 @@
 
+static bool load_shader_source (std::string const& filepath, std::string* src_text) {
+	if (!read_text_file(filepath.c_str(), src_text)) return false;
+	
+	for (auto c=src_text->begin(); c!=src_text->end();) {
+		
+		if (*c == '$') {
+			auto line_begin = c;
+			++c;
+			
+			auto syntax_error = [&] () {
+				
+				while (*c != '\n' && *c != '\r') ++c;
+				std::string line (line_begin, c);
+				
+				log_warning("load_shader_source:: expected '$include \"filename\"' syntax but got: '%s'!", line.c_str());
+			};
+			
+			while (*c == ' ' || *c == '\t') ++c;
+			
+			auto cmd = c;
+			
+			while ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_') ++c;
+			
+			if (std::string(cmd, c).compare("include") == 0) {
+				
+				while (*c == ' ' || *c == '\t') ++c;
+				
+				if (*c != '"') {
+					syntax_error();
+					return false;
+				}
+				++c;
+				
+				auto filename_str_begin = c;
+				
+				while (*c != '"') ++c;
+				
+				std::string filename_str (filename_str_begin, c);
+				
+				if (*c != '"') {
+					syntax_error();
+					return false;
+				}
+				++c;
+				
+				while (*c == ' ' || *c == '\t') ++c;
+				
+				if (*c != '\r' && *c != '\n') {
+					syntax_error();
+					return false;
+				}
+				
+				auto line_end = c;
+				
+				{
+					auto last_slash = filepath.begin();
+					for (auto ch=filepath.begin(); ch!=filepath.end(); ++ch) if (*ch == '/') last_slash = ch +1;
+					
+					std::string inc_path (filepath.begin(), last_slash);
+					
+					std::string inc_filepath = prints("%s%s", inc_path.c_str(), filename_str.c_str());
+					
+					std::string inc_text;
+					if (!load_shader_source(inc_filepath, &inc_text)) {
+						log_warning("load_shader_source:: &include: '%s' could not be loaded!", inc_filepath.c_str());
+						return false;
+					}
+					
+					auto line_begin_i = line_begin -src_text->begin();
+					
+					src_text->erase(line_begin, line_end);
+					src_text->insert(src_text->begin() +line_begin_i, inc_text.begin(), inc_text.end());
+					
+					c = src_text->begin() +line_begin_i +inc_text.length();
+				}
+				
+			}
+		} else {
+			++c;
+		}
+		
+	}
+	
+	return true;
+}
+
 static bool get_shader_compile_log (GLuint shad, std::string* log) {
 	GLsizei log_len;
 	{
@@ -53,14 +139,13 @@ static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
 	
 	GLuint shad = glCreateShader(type);
 	
-	std::string text;
-	if (!read_text_file(filepath, &text)) {
+	std::string src_text;
+	if (!load_shader_source(filepath, &src_text)) {
 		log_warning_asset_load(filepath);
-		return false; // fail
 	}
 	
 	{
-		cstr ptr = text.c_str();
+		cstr ptr = src_text.c_str();
 		glShaderSource(shad, 1, &ptr, NULL);
 	}
 	

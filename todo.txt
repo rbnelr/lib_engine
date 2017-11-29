@@ -58,6 +58,8 @@ DONE:
  
  implemented and debugged normal mapping
  
+ shader $include command
+ 
 TODO
 -FEATURES:
  
@@ -78,6 +80,7 @@ TODO
  
 -BUGS:
  shader reloading sometimes broken?
+ -> (2017.11.29) gone ?
  
  stuck wasd/space/ctrl movement sometimes
  -find reproducible case and log events i recieve
