@@ -1,5 +1,7 @@
 
-static bool load_shader_source (std::string const& filepath, std::string* src_text) {
+static bool load_shader_source (std::string const& filepath, std::string* src_text IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+	vector_append(fcs)->init(filepath); // put file shader depends on into the file change poll list before we even know that it exists, so that if it does not exist we automaticly (re)load the shader if it gets created
+	
 	if (!read_text_file(filepath.c_str(), src_text)) return false;
 	
 	for (auto c=src_text->begin(); c!=src_text->end();) {
@@ -62,7 +64,7 @@ static bool load_shader_source (std::string const& filepath, std::string* src_te
 					std::string inc_filepath = prints("%s%s", inc_path.c_str(), filename_str.c_str());
 					
 					std::string inc_text;
-					if (!load_shader_source(inc_filepath, &inc_text)) {
+					if (!load_shader_source(inc_filepath, &inc_text IF_RZ_AUTO_FILE_RELOAD(,fcs) )) {
 						log_warning("load_shader_source:: &include: '%s' could not be loaded!", inc_filepath.c_str());
 						return false;
 					}
@@ -134,14 +136,15 @@ static bool get_program_link_log (GLuint prog, std::string* log) {
 	}
 }
 
-static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
-	bool success = true;
+static bool load_shader (GLenum type, std::string filepath, GLuint* out IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+	*out = 0;
 	
 	GLuint shad = glCreateShader(type);
 	
 	std::string src_text;
-	if (!load_shader_source(filepath, &src_text)) {
-		log_warning_asset_load(filepath);
+	if (!load_shader_source(filepath, &src_text IF_RZ_AUTO_FILE_RELOAD(,fcs))) {
+		log_warning_asset_load(filepath.c_str());
+		return false;
 	}
 	
 	{
@@ -151,6 +154,7 @@ static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
 	
 	glCompileShader(shad);
 	
+	bool success;
 	{
 		GLint status;
 		glGetShaderiv(shad, GL_COMPILE_STATUS, &status);
@@ -161,11 +165,11 @@ static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
 		success = status == GL_TRUE;
 		if (!success) {
 			// compilation failed
-			log_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath, log_avail ? log_str.c_str() : "<no log available>");
+			log_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath.c_str(), log_avail ? log_str.c_str() : "<no log available>");
 		} else {
 			// compilation success
 			if (log_avail) {
-				log_warning("OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filepath, log_str.c_str());
+				log_warning("OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filepath.c_str(), log_str.c_str());
 			}
 		}
 	}
@@ -173,22 +177,23 @@ static bool load_shader (GLenum type, cstr filepath, GLuint* out) {
 	*out = shad;
 	return success;
 }
-static GLuint load_program (cstr vert_filepath, cstr frag_filepath, GLuint* out) {
-	bool success = true;
+static GLuint load_program (std::string vert_filepath, std::string frag_filepath, GLuint* out  IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
 	
 	GLuint prog = glCreateProgram();
 	
 	GLuint vert;
 	GLuint frag;
 	
-	success = success && load_shader(GL_VERTEX_SHADER, vert_filepath, &vert);
-	success = success && load_shader(GL_FRAGMENT_SHADER, frag_filepath, &frag);
+	*out = 0;
+	if (!load_shader(GL_VERTEX_SHADER, vert_filepath, &vert IF_RZ_AUTO_FILE_RELOAD(,fcs) )) return false;
+	if (!load_shader(GL_FRAGMENT_SHADER, frag_filepath, &frag IF_RZ_AUTO_FILE_RELOAD(,fcs) )) return false;
 	
 	glAttachShader(prog, vert);
 	glAttachShader(prog, frag);
 	
 	glLinkProgram(prog);
 	
+	bool success;
 	{
 		GLint status;
 		glGetProgramiv(prog, GL_LINK_STATUS, &status);
@@ -199,11 +204,11 @@ static GLuint load_program (cstr vert_filepath, cstr frag_filepath, GLuint* out)
 		success = status == GL_TRUE;
 		if (!success) {
 			// linking failed
-			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
+			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
 		} else {
 			// linking success
 			if (log_avail) {
-				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath, frag_filepath, log_str.c_str());
+				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath, log_str.c_str());
 			}
 		}
 	}
@@ -521,7 +526,7 @@ struct Texture2D {
 	iv2					dim;
 	std::vector<Mip>	mips;
 	
-	#if RZ_AUTO_FILE_RELOADING
+	#if RZ_AUTO_FILE_RELOAD
 	File_Change_Poller	fc;
 	#endif
 	
@@ -542,13 +547,13 @@ struct Texture2D {
 		
 		data.data = nullptr;
 		
+		#if RZ_AUTO_FILE_RELOAD
+		fc.init(filepath);
+		#endif
+		
 		if (!reload(filepath)) {
 			log_warning_asset_load(filepath.c_str());
 		}
-		
-		#if RZ_AUTO_FILE_RELOADING
-		fc.init(filepath.c_str());
-		#endif
 	}
 	
 	void upload_compressed (GLenum internalFormat) {
@@ -629,13 +634,13 @@ struct Texture2D {
 	}
 	
 	bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOADING
-		auto filepath = prints("%s/%s", textures_base_path, filename);
-		
-		bool reloaded = fc.poll_did_change(filepath.c_str());
+		#if RZ_AUTO_FILE_RELOAD
+		bool reloaded = fc.poll_did_change();
 		if (!reloaded) return false;
 		
-		printf("texture source file changed, reloading \"%s\".\n", filepath.c_str());
+		printf("texture source file changed, reloading \"%s\".\n", filename);
+		
+		auto filepath = prints("%s/%s", textures_base_path, filename);
 		
 		return reload(filepath);
 		#else
@@ -703,9 +708,8 @@ struct Shader {
 	cstr		vert_filename;
 	cstr		frag_filename;
 	
-	#if RZ_AUTO_FILE_RELOADING
-	File_Change_Poller	fc_vert;
-	File_Change_Poller	fc_frag;
+	#if RZ_AUTO_FILE_RELOAD
+	std::vector<File_Change_Poller>	fcs;
 	#endif
 	
 	struct Uniform_Texture {
@@ -726,24 +730,22 @@ struct Shader {
 		uniforms = u;
 		textures = t;
 		
-		_load(&prog);
-		
-		#if RZ_AUTO_FILE_RELOADING
-		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
-		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
-		
-		fc_vert.init(vert_filepath.c_str());
-		fc_frag.init(frag_filepath.c_str());
-		#endif
+		_load(&prog IF_RZ_AUTO_FILE_RELOAD( , &fcs ) );
 	}
-	bool _load (GLuint* out) {
+	bool _load (GLuint* out, IF_RZ_AUTO_FILE_RELOAD( std::vector<File_Change_Poller>* fcs ) ) {
 		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
 		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
 		
-		bool res = load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
-		get_uniform_locations(*out);
-		setup_uniform_textures(*out);
+		bool res = load_program(vert_filepath, frag_filepath, out IF_RZ_AUTO_FILE_RELOAD(,fcs) );
+		if (res) {
+			get_uniform_locations(*out);
+			setup_uniform_textures(*out);
+		}
 		return res;
+	}
+	
+	bool valid () {
+		return prog != 0;
 	}
 	
 	void get_uniform_locations (GLuint prog) {
@@ -762,25 +764,38 @@ struct Shader {
 		}
 	}
 	
-	bool try_reload () { // we keep the old shader as long as the new one has compilation errors
-		GLuint tmp;
-		bool success = _load(&tmp);
-		if (success) {
-			unload_program(prog);
-			prog = tmp;
-		}
-		return success;
-	}
 	bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOADING
+		#if RZ_AUTO_FILE_RELOAD
+		bool reloaded = false;
+		for (auto& f : fcs) {
+			if (f.poll_did_change()) {
+				reloaded = true;
+				break;
+			}
+		}
 		
-		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
-		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
-		
-		bool reloaded = fc_vert.poll_did_change(vert_filepath.c_str()) || fc_frag.poll_did_change(frag_filepath.c_str());
 		if (reloaded) {
-			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filepath.c_str(), frag_filepath.c_str());
-			reloaded = try_reload();
+			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filename, frag_filename);
+			
+			// keep old data if the reloading of the shader fails
+			GLuint tmp;
+			#if RZ_AUTO_FILE_RELOAD
+			std::vector<File_Change_Poller>	tmp_fcs;
+			#endif
+			
+			reloaded = _load(&tmp, IF_RZ_AUTO_FILE_RELOAD(&tmp_fcs) );
+			if (reloaded) {
+				
+				for (auto& f : fcs) f.close();
+				
+				fcs = tmp_fcs;
+				
+				unload_program(prog);
+				
+				prog = tmp;
+			} else {
+				for (auto& f : tmp_fcs) f.close();
+			}
 		}
 		return reloaded;
 		#else

@@ -29,25 +29,45 @@ typedef fhm		hm;
 #include "platform.hpp"
 
 #if RZ_DEV
-	#define RZ_AUTO_FILE_RELOADING 1
+	#define RZ_AUTO_FILE_RELOAD 1
 #else
-	#define RZ_AUTO_FILE_RELOADING 0
+	#define RZ_AUTO_FILE_RELOAD 0
+#endif
+
+#if RZ_AUTO_FILE_RELOAD
+	#define IF_RZ_AUTO_FILE_RELOAD(...) __VA_ARGS__
+#else
+	#define IF_RZ_AUTO_FILE_RELOAD(...)
 #endif
 
 struct File_Change_Poller {
+	std::string	filepath;
+	
 	HANDLE		fh;
 	FILETIME	last_change_t;
 	
-	bool init (cstr filepath) {
-		fh = CreateFile(filepath, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	bool init (std::string f) {
+		filepath = f;
+		last_change_t = {}; // zero for debuggability
+		return open();
+	}
+	bool open () {
+		fh = CreateFile(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (fh != INVALID_HANDLE_VALUE) {
 			GetFileTime(fh, NULL, NULL, &last_change_t);
 		}
 		return fh != INVALID_HANDLE_VALUE;
 	}
 	
-	bool poll_did_change (cstr filepath) {
-		if (fh == INVALID_HANDLE_VALUE) return init(filepath); // contiously try to open the file so we can 'reload' it if it becomes available
+	void close () {
+		if (fh != INVALID_HANDLE_VALUE) {
+			auto ret = CloseHandle(fh);
+			dbg_assert(ret != 0);
+		}
+	}
+	
+	bool poll_did_change () {
+		if (fh == INVALID_HANDLE_VALUE) return open();
 		
 		FILETIME cur_last_change_t;
 		
@@ -126,9 +146,19 @@ static Vertex_Layout mesh_vert_layout = {
 #include "mesh_loader.hpp"
 #include "shapes.hpp"
 
+static constexpr GLint MAX_TEXTURE_UNIT = 8; // for debugging only, to unbind textures from unused texture units
+
 static void bind_texture_unit (GLint tex_unit, Texture2D* tex) {
+	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT, "increase MAX_TEXTURE_UNIT (%d, tex_unit: %d)", MAX_TEXTURE_UNIT, tex_unit);
+	
 	glActiveTexture(GL_TEXTURE0 +tex_unit);
 	glBindTexture(GL_TEXTURE_2D, tex->tex);
+}
+static void unbind_texture_unit (GLint tex_unit) {
+	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT);
+	
+	glActiveTexture(GL_TEXTURE0 +tex_unit);
+	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 enum mesh_type {
@@ -167,14 +197,27 @@ struct Mesh {
 	};
 	std::vector<Texture>	textures;
 	
+	void bind_textures () {
+		for (GLint tex_unit=0; tex_unit<MAX_TEXTURE_UNIT; ++tex_unit) {
+			bool tex_unit_used = false;
+			for (auto& t : textures) {
+				if (t.tex_unit == tex_unit) {
+					tex_unit_used = true;
+					break;
+				}
+			}
+			if (!tex_unit_used) unbind_texture_unit(tex_unit);
+		}
+		for (auto& t : textures) t.bind();
+	}
+	
+	#if RZ_AUTO_FILE_RELOAD
+	File_Change_Poller	fc;
+	#endif
+	
 	union {
 		struct { // MT_FILE
 			cstr					filename;
-			
-			#if RZ_AUTO_FILE_RELOADING
-			File_Change_Poller	fc;
-			#endif
-			
 		};
 		union { // generated
 			bool	changed;
@@ -237,14 +280,12 @@ struct Mesh {
 	bool reload_if_needed () {
 		switch (type) {
 			case MT_FILE: {
-				#if RZ_AUTO_FILE_RELOADING
+				#if RZ_AUTO_FILE_RELOAD
 				if (type != MT_FILE) return false;
 				
-				auto filepath = prints("%s/%s", meshes_base_path, filename);
-				
-				bool reloaded = fc.poll_did_change(filepath.c_str());
+				bool reloaded = fc.poll_did_change();
 				if (reloaded) {
-					printf("mesh source file changed, reloading mesh \"%s\".\n", filepath.c_str());
+					printf("mesh source file changed, reloading mesh \"%s\".\n", name);
 					reload();
 				}
 				
@@ -287,7 +328,7 @@ static Mesh* _new_mesh (cstr n, Shader* s, Shader* s2, v3 p, m3 o, cstr f, std::
 	m->textures = t;
 	m->reload();
 	
-	#if RZ_AUTO_FILE_RELOADING
+	#if RZ_AUTO_FILE_RELOAD
 	auto filepath = prints("%s/%s", meshes_base_path, m->filename);
 	m->fc.init(filepath.c_str());
 	#endif
@@ -309,6 +350,7 @@ static Mesh* new_gen_tile_floor		(cstr n, Shader* s, std::initializer_list<Mesh:
 	m->reload();
 	m->changed = false;
 	m->textures = t;
+	g_meshes_opaque.push_back(m);
 	return m;
 }
 static Mesh* new_gen_tetrahedron	(cstr n, Shader* s, v3 p, m3 o, f32 r) {
@@ -316,6 +358,7 @@ static Mesh* new_gen_tetrahedron	(cstr n, Shader* s, v3 p, m3 o, f32 r) {
 	m->MT_GEN_TETRAHEDRON_ =	{ r };
 	m->reload();
 	m->changed = false;
+	g_meshes_opaque.push_back(m);
 	return m;
 }
 static Mesh* new_gen_cube			(cstr n, Shader* s, v3 p, m3 o, f32 r) {
@@ -323,6 +366,7 @@ static Mesh* new_gen_cube			(cstr n, Shader* s, v3 p, m3 o, f32 r) {
 	m->MT_GEN_CUBE_ =			{ r };
 	m->reload();
 	m->changed = false;
+	g_meshes_opaque.push_back(m);
 	return m;
 }
 static Mesh* new_gen_cylinder		(cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces) {
@@ -330,6 +374,7 @@ static Mesh* new_gen_cylinder		(cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32
 	m->MT_GEN_CYLINDER_ =		{ r, l, faces };
 	m->reload();
 	m->changed = false;
+	g_meshes_opaque.push_back(m);
 	return m;
 }
 static Mesh* new_gen_iso_sphere		(cstr n, Shader* s, v3 p, m3 o, f32 r, u32 facesw, u32 facesh) {
@@ -337,6 +382,7 @@ static Mesh* new_gen_iso_sphere		(cstr n, Shader* s, v3 p, m3 o, f32 r, u32 face
 	m->MT_GEN_SPHERE_ =			{ r, facesw, facesh };
 	m->reload();
 	m->changed = false;
+	g_meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -532,6 +578,16 @@ int main (int argc, char** argv) {
 		
 		typedef std::initializer_list<Mesh::Texture>	TL;
 		{
+			auto* tex_albedo =		new_texture2d("nier/2b_skin_0.dds");
+			auto* tex_a =			new_texture2d("nier/2b_skin_1.dds");
+			auto* tex_normal =		new_texture2d("nier/2b_skin_2.dds", TEX_LINEAR);
+			auto* tex_b =			new_texture2d("nier/2b_skin_4.dds");
+			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}, {3,tex_b}};
+			
+			new_mesh("2b skin",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_skin.obj", texs);
+			new_mesh("2b eyes",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_eyes.obj", texs);
+		}
+		{
 			auto* tex_albedo =		new_texture2d("nier/2b_clothing_0.dds");
 			auto* tex_normal =		new_texture2d("nier/2b_clothing_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
@@ -540,16 +596,6 @@ int main (int argc, char** argv) {
 			new_mesh("2b skirt",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_dress_skirt.obj", texs);
 			new_mesh("2b sliceb",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_alice_band.obj", texs);
 			new_mesh("2b blindf",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_blindfold.obj", texs);
-		}
-		{
-			auto* tex_albedo =		new_texture2d("nier/2b_skin_0.dds");
-			auto* tex_a =			new_texture2d("nier/2b_skin_1.dds");
-			auto* tex_normal =		new_texture2d("nier/2b_skin_2.dds", TEX_LINEAR);
-			auto* tex_b =			new_texture2d("nier/2b_skin_4.dds");
-			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}, {3,tex_b}};
-			
-			new_mesh("2b body",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_skin.obj", texs);
-			new_mesh("2b eyes",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_eyes.obj", texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/2b_frills_hair_0.dds");
@@ -569,12 +615,48 @@ int main (int argc, char** argv) {
 		}
 		
 		{
+			auto* tex_albedo =		new_texture2d("nier/9s_skin_0.dds");
+			auto* tex_a =			new_texture2d("nier/9s_skin_1.dds");
+			auto* tex_normal =		new_texture2d("nier/9s_skin_2.dds", TEX_LINEAR);
+			auto* tex_b =			new_texture2d("nier/9s_skin_4.dds");
+			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}, {3,tex_b}};
+			
+			new_mesh("9s skin",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_skin.obj", texs);
+			new_mesh("9s eyes",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_eyes.obj", texs);
+		}
+		{
+			auto* tex_albedo =		new_texture2d("nier/9s_clothing_0.dds");
+			auto* tex_a =			new_texture2d("nier/9s_clothing_1.dds");
+			auto* tex_normal =		new_texture2d("nier/9s_clothing_3.dds", TEX_LINEAR);
+			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
+			
+			new_mesh("9s clothes",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_clothes.obj", texs);
+			new_mesh("9s shorts",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_shorts.obj", texs);
+			new_mesh("9s blindf",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_blindfold.obj", texs);
+		}
+		{
+			auto* tex_albedo =		new_texture2d("nier/9s_hair_0.dds");
+			auto* tex_normal =		new_texture2d("nier/9s_hair_3.dds", TEX_LINEAR);
+			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
+			
+			new_transp_mesh("9s hair",shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_hair.obj", texs);
+		}
+		
+		{
 			auto* tex_albedo =		new_texture2d("nier/sword_small_2b_0.dds");
 			auto* tex_a =			new_texture2d("nier/sword_small_2b_2.dds");
 			auto* tex_normal =		new_texture2d("nier/sword_small_2b_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
 			
 			new_mesh("sword S 2b",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/sword_small_2b.obj", texs);
+		}
+		{
+			auto* tex_albedo =		new_texture2d("nier/sword_small_9s_0.dds");
+			auto* tex_a =			new_texture2d("nier/sword_small_9s_2.dds");
+			auto* tex_normal =		new_texture2d("nier/sword_small_9s_3.dds", TEX_LINEAR);
+			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
+			
+			new_mesh("sword S 9s",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/sword_small_9s.obj", texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/sword_large_0.dds");
@@ -693,25 +775,30 @@ int main (int argc, char** argv) {
 		}
 		
 		for (auto* s : g_shaders) {
-			s->bind();
-			s->set_unif("screen_dim", (v2)wnd_dim);
-			s->set_unif("mcursor_pos", bottom_up_mcursor_pos());
+			if (s->valid()) {
+				s->bind();
+				s->set_unif("screen_dim", (v2)wnd_dim);
+				s->set_unif("mcursor_pos", bottom_up_mcursor_pos());
+			}
 		}
 		
 		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
 		
 		if (1) { // draw skybox
-			glDisable(GL_DEPTH_TEST);
 			
-			shad_skybox->bind();
-			shad_skybox->set_unif("skybox_to_clip", skybox_to_clip);
-			
-			// Coordinates generated in vertex shader
-			glBindBuffer(GL_ARRAY_BUFFER, 0);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-			glDrawArrays(GL_TRIANGLES, 0, 6*6);
-			
-			glEnable(GL_DEPTH_TEST);
+			if (shad_skybox->valid()) {
+				glDisable(GL_DEPTH_TEST);
+				
+				shad_skybox->bind();
+				shad_skybox->set_unif("skybox_to_clip", skybox_to_clip);
+				
+				// Coordinates generated in vertex shader
+				glBindBuffer(GL_ARRAY_BUFFER, 0);
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+				glDrawArrays(GL_TRIANGLES, 0, 6*6);
+				
+				glEnable(GL_DEPTH_TEST);
+			}
 		} else { // draw clear color
 			v4 clear_color = v4(srgb(41,49,52)*3, 1);
 			glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
@@ -720,52 +807,56 @@ int main (int argc, char** argv) {
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
 		for (auto* m : g_meshes_opaque) {
-			
-			hm model_to_world = m->get_transform();
-			
-			m->shad->bind();
-			m->shad->set_unif("model_to_world",	model_to_world.m4());
-			m->shad->set_unif("world_to_cam",	world_to_cam.m4());
-			m->shad->set_unif("cam_to_clip",	cam_to_clip);
-			m->shad->set_unif("cam_to_world",	cam_to_world.m4());
-			
-			for (auto& t : m->textures) t.bind();
-			
-			m->vbo.draw_entire(m->shad);
+			if (m->shad->valid()) {
+				m->bind_textures();
+				
+				hm model_to_world = m->get_transform();
+				
+				m->shad->bind();
+				m->shad->set_unif("model_to_world",	model_to_world.m4());
+				m->shad->set_unif("world_to_cam",	world_to_cam.m4());
+				m->shad->set_unif("cam_to_clip",	cam_to_clip);
+				m->shad->set_unif("cam_to_world",	cam_to_world.m4());
+				
+				m->vbo.draw_entire(m->shad);
+			}
 		}
 		
 		for (auto* m : g_meshes_translucent) {
 			
+			m->bind_textures();
+			
 			hm model_to_world = m->get_transform();
 			
-			for (auto& t : m->textures) t.bind();
+			if (m->shad->valid()) {
+				m->shad->bind();
+				m->shad->set_unif("model_to_world",	model_to_world.m4());
+				m->shad->set_unif("world_to_cam",	world_to_cam.m4());
+				m->shad->set_unif("cam_to_clip",	cam_to_clip);
+				m->shad->set_unif("cam_to_world",	cam_to_world.m4());
+				
+				m->vbo.draw_entire(m->shad);
+			}
+			if (m->shad_transp_pass2->valid()) { 
+				glDepthMask(GL_FALSE);
+				glEnable(GL_BLEND);
+				glDepthFunc(GL_LESS);
 			
-			m->shad->bind();
-			m->shad->set_unif("model_to_world",	model_to_world.m4());
-			m->shad->set_unif("world_to_cam",	world_to_cam.m4());
-			m->shad->set_unif("cam_to_clip",	cam_to_clip);
-			m->shad->set_unif("cam_to_world",	cam_to_world.m4());
-			
-			m->vbo.draw_entire(m->shad);
-			
-			glDepthMask(GL_FALSE);
-			glEnable(GL_BLEND);
-		glDepthFunc(GL_LESS);
-		
-			m->shad_transp_pass2->bind();
-			m->shad_transp_pass2->set_unif("model_to_world",	model_to_world.m4());
-			m->shad_transp_pass2->set_unif("world_to_cam",	world_to_cam.m4());
-			m->shad_transp_pass2->set_unif("cam_to_clip",	cam_to_clip);
-			m->shad_transp_pass2->set_unif("cam_to_world",	cam_to_world.m4());
-			
-			m->vbo.draw_entire(m->shad_transp_pass2);
-			
-		glDepthFunc(GL_LEQUAL);
-			glDisable(GL_BLEND);
-			glDepthMask(GL_TRUE);
+				m->shad_transp_pass2->bind();
+				m->shad_transp_pass2->set_unif("model_to_world",	model_to_world.m4());
+				m->shad_transp_pass2->set_unif("world_to_cam",	world_to_cam.m4());
+				m->shad_transp_pass2->set_unif("cam_to_clip",	cam_to_clip);
+				m->shad_transp_pass2->set_unif("cam_to_world",	cam_to_world.m4());
+				
+				m->vbo.draw_entire(m->shad_transp_pass2);
+				
+				glDepthFunc(GL_LEQUAL);
+				glDisable(GL_BLEND);
+				glDepthMask(GL_TRUE);
+			}
 		}
 		
-		{
+		if (shad_overlay_tex->valid()) {
 			glEnable(GL_BLEND);
 			glDisable(GL_DEPTH_TEST);
 			
