@@ -181,24 +181,22 @@ static void gen_tile_floor (std::vector<byte>* data) {
 	f32	tile_dim = 1;
 	iv2	floor_r = 20;
 	
-	auto out = (Mesh_Vertex*)&*vector_append(data, ((floor_r.y*2 * floor_r.x*2 * 6) / 2) * sizeof(Mesh_Vertex));
+	auto out = (Mesh_Vertex*)&*vector_append(data, (floor_r.y*2 * floor_r.x*2 * 6) * sizeof(Mesh_Vertex));
 	
-	auto emit_quad = [&] (v3 pos, bool checker) {
-		if (checker) {
-			v4 col = v4(0 ? srgb(224,226,228) : srgb(41,49,52), 1);
-			*out++ = { pos +v3(+0.5f,-0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-			*out++ = { pos +v3(+0.5f,+0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-			*out++ = { pos +v3(-0.5f,-0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-			
-			*out++ = { pos +v3(-0.5f,-0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-			*out++ = { pos +v3(+0.5f,+0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-			*out++ = { pos +v3(-0.5f,+0.5f,0), DEFAULT_NORM, DEFAULT_TANG, DEFAULT_UV, col };
-		}
+	auto emit_quad = [&] (v3 pos) {
+		v4 col = v4(0 ? srgb(224,226,228) : srgb(41,49,52), 1);
+		*out++ = { pos +v3(+1,-1,0), DEFAULT_NORM, DEFAULT_TANG, v2(1,0), col };
+		*out++ = { pos +v3(+1,+1,0), DEFAULT_NORM, DEFAULT_TANG, v2(1,1), col };
+		*out++ = { pos +v3(-1,-1,0), DEFAULT_NORM, DEFAULT_TANG, v2(0,0), col };
+		
+		*out++ = { pos +v3(-1,-1,0), DEFAULT_NORM, DEFAULT_TANG, v2(0,0), col };
+		*out++ = { pos +v3(+1,+1,0), DEFAULT_NORM, DEFAULT_TANG, v2(1,1), col };
+		*out++ = { pos +v3(-1,+1,0), DEFAULT_NORM, DEFAULT_TANG, v2(0,1), col };
 	};
 	
 	for (s32 y=0; y<(floor_r.y*2); ++y) {
 		for (s32 x=0; x<(floor_r.x*2); ++x) {
-			emit_quad( v3(+0.5f,+0.5f,Z) +v3((f32)(x -floor_r.x)*tile_dim, (f32)(y -floor_r.y)*tile_dim, 0), BOOL_XOR(EVEN(x), EVEN(y)) );
+			emit_quad( v3(+1,+1,Z) +v3((f32)(x -floor_r.x)*tile_dim*2, (f32)(y -floor_r.y)*tile_dim*2, 0) );
 		}
 	}
 	

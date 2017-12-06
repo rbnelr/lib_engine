@@ -49,3 +49,5 @@ void FRAG_COL (vec4 col) {
 void FRAG_COL (vec3 col) {
 	FRAG_COL(vec4(col, 1));
 }
+
+float map (float x, float a, float b) { return (x -a) / (b -a); }

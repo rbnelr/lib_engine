@@ -218,6 +218,22 @@ static u64 get_file_size (FILE* f) {
 	return file_size;
 }
 
+struct Data_Block {
+	byte*		data;
+	u64			size;
+	
+	void free () {
+		::free(data);
+	}
+	
+	static Data_Block alloc (u64 s) {
+		return { (byte*)malloc(s), s };
+	}
+	~Data_Block () {
+		free();
+	}
+};
+
 // reads entire file into already allocated buffer
 static bool read_entire_file (cstr filename, void* buf, u64 expected_file_size) {
 	FILE* f = fopen(filename, "rb"); // read binary
@@ -230,6 +246,22 @@ static bool read_entire_file (cstr filename, void* buf, u64 expected_file_size) 
 	
 	auto ret = fread(buf, 1,file_size, f);
 	dbg_assert(ret == file_size);
+	
+	return true;
+}
+// reads entire file into std::vector
+static bool read_entire_file (cstr filename, Data_Block* data) {
+	FILE* f = fopen(filename, "rb"); // read binary because i don't want to convert "\r\n" to "\n"
+	if (!f) return false; // fail
+	
+	defer { fclose(f); };
+	
+	data->size = get_file_size(f);
+	
+	data->data = (byte*)malloc(data->size);
+	
+	auto ret = fread(data->data, 1,data->size, f);
+	dbg_assert(ret == data->size);
 	
 	return true;
 }

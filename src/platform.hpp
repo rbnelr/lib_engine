@@ -84,6 +84,7 @@ static void APIENTRY ogl_debug_proc (GLenum source, GLenum type, GLuint id, GLen
 		case 131185: // Buffer detailed info (where the memory lives which is supposed to depend on the usage hint)
 		case 1282: // using shader that was not compiled successfully
 		
+		case 2: // API_ID_RECOMPILE_FRAGMENT_SHADER performance warning has been generated. Fragment shader recompiled due to state change.
 		
 		//case 131154: // Pixel transfer sync with rendering warning
 		
@@ -173,6 +174,7 @@ static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 d
 	glfwSetCursorPosRelativeCallback(wnd,	glfw_cursor_move_relative);
 	
 	glfwMakeContextCurrent(wnd);
+	
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 	
 	if (GLAD_GL_ARB_debug_output) {

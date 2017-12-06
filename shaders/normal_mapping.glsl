@@ -1,21 +1,3 @@
-#version 150 core // version 3.2
-
-$include "common.glsl"
-
-in		vec3	vs_pos_cam;
-in		vec3	vs_norm_cam;
-in		vec4	vs_tang_cam;
-in		vec2	vs_uv;
-in		vec4	vs_col;
-
-uniform sampler2D	albedo;
-uniform sampler2D	normal;
-uniform sampler2D	metallic;
-uniform sampler2D	roughness;
-
-uniform mat4	cam_to_world;
-
-float map (float x, float a, float b) { return (x -a) / (b -a); }
 
 vec3 normal_mapping (vec3 pos_cam, vec3 geom_norm_cam, vec4 tang_cam, vec2 uv, sampler2D normal_tex) {
 	
@@ -51,20 +33,4 @@ vec3 normal_mapping (vec3 pos_cam, vec3 geom_norm_cam, vec4 tang_cam, vec2 uv, s
 	//DBG_COL(pow(normal_tang_sample, v3(2.2)));
 	
 	return norm_cam;
-}
-
-$include "skybox.glsl"
-
-void main () {
-	vec3 alb = vec4(texture(albedo, vs_uv).rgb, 1).rgb;
-	vec3 norm_cam = normal_mapping(vs_pos_cam, vs_norm_cam, vs_tang_cam, vs_uv, normal);
-	
-	vec3 cam_to_p = normalize(vs_pos_cam);
-	vec3 refl_cam = reflect(cam_to_p, norm_cam);
-	
-	vec4 col = vec4( sky(mat3(cam_to_world) * refl_cam), 1 );
-	
-	col *= vec4(alb,1) * vs_col;
-	
-	FRAG_COL(col);
 }

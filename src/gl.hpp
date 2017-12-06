@@ -229,41 +229,318 @@ static void unload_program (GLuint prog) {
 
 #include "stb_image.h"
 
-static u8* load_texture2d (cstr filepath, iv2* dim, ui* bbp) {
-	stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
-	int n;
-	u8* data = stbi_load(filepath, &dim->x, &dim->y, &n, 0);
-	*bbp = (ui)n * 8;
-	return data;
+namespace dds_n {
+	typedef u32 DWORD;
+	
+	struct DDS_PIXELFORMAT {
+		DWORD			dwSize;
+		DWORD			dwFlags;
+		DWORD			dwFourCC;
+		DWORD			dwRGBBitCount;
+		DWORD			dwRBitMask;
+		DWORD			dwGBitMask;
+		DWORD			dwBBitMask;
+		DWORD			dwABitMask;
+	};
+	
+	struct DDS_HEADER {
+		DWORD			dwSize;
+		DWORD			dwFlags;
+		DWORD			dwHeight;
+		DWORD			dwWidth;
+		DWORD			dwPitchOrLinearSize;
+		DWORD			dwDepth;
+		DWORD			dwMipMapCount;
+		DWORD			dwReserved1[11];
+		DDS_PIXELFORMAT	ddspf;
+		DWORD			dwCaps;
+		DWORD			dwCaps2;
+		DWORD			dwCaps3;
+		DWORD			dwCaps4;
+		DWORD			dwReserved2;
+	};
+	
+	static constexpr DWORD DDSD_CAPS			=0x1;
+	static constexpr DWORD DDSD_HEIGHT			=0x2;
+	static constexpr DWORD DDSD_WIDTH			=0x4;
+	static constexpr DWORD DDSD_PITCH			=0x8;
+	static constexpr DWORD DDSD_PIXELFORMAT		=0x1000;
+	static constexpr DWORD DDSD_MIPMAPCOUNT		=0x20000;
+	static constexpr DWORD DDSD_LINEARSIZE		=0x80000;
+	static constexpr DWORD DDSD_DEPTH			=0x800000;
+	
+	static constexpr DWORD DDSCAPS_COMPLEX		=0x8;
+	static constexpr DWORD DDSCAPS_MIPMAP		=0x400000;
+	static constexpr DWORD DDSCAPS_TEXTURE		=0x1000;
+	
+	static constexpr DWORD DDPF_ALPHAPIXELS		=0x1;
+	static constexpr DWORD DDPF_ALPHA			=0x2;
+	static constexpr DWORD DDPF_FOURCC			=0x4;
+	static constexpr DWORD DDPF_RGB				=0x40;
+	static constexpr DWORD DDPF_YUV				=0x200;
+	static constexpr DWORD DDPF_LUMINANCE		=0x20000;
+
+	struct DXT_Block_128 {
+		u64	alpha_table; // 4-bit [4][4] table of alpha values
+		u16	c0; // RGB 565
+		u16	c1; // RGB 565
+		u32 col_LUT; // 2-bit [4][4] LUT into c0 - c4
+	};
+	
+	static DXT_Block_128 flip_vertical (DXT_Block_128 b) {
+		
+		b.alpha_table =
+			(((b.alpha_table >>  0) & 0xffff) << 48) |
+			(((b.alpha_table >> 16) & 0xffff) << 32) |
+			(((b.alpha_table >> 32) & 0xffff) << 16) |
+			(((b.alpha_table >> 48) & 0xffff) <<  0);
+		
+		b.col_LUT =
+			(((b.col_LUT >>  0) & 0xff) << 24) |
+			(((b.col_LUT >>  8) & 0xff) << 16) |
+			(((b.col_LUT >> 16) & 0xff) <<  8) |
+			(((b.col_LUT >> 24) & 0xff) <<  0);
+		
+		return b;
+	}
+
+	static void inplace_flip_DXT64_vertical (void* data, u32 w, u32 h) {
+		
+		DXT_Block_128* line_a =		(DXT_Block_128*)data;
+		DXT_Block_128* line_b =		line_a +((h -1) * w);
+		DXT_Block_128* line_a_end =	line_a +((h / 2) * w);
+		
+		for (u32 j=0; line_a != line_a_end; ++j) {
+			
+			for (u32 i=0; i<w; ++i) {
+				DXT_Block_128 tmp = line_a[i];
+				line_a[i] = flip_vertical(line_b[i]);
+				line_b[i] = flip_vertical(tmp);
+			}
+			
+			line_a += w;
+			line_b -= w;
+		}
+	}
 }
 
-enum tex_type {
-	TEX_TYPE_SRGB_A		=0,
-	TEX_TYPE_LIN_RGB	,
+static void inplace_flip_vertical (void* data, u64 h, u64 stride) {
+	dbg_assert((stride % 4) == 0);
+	stride /= 4;
+	
+	u32* line_a =		(u32*)data;
+	u32* line_b =		line_a +((h -1) * stride);
+	u32* line_a_end =	line_a +((h / 2) * stride);
+	
+	for (u32 j=0; line_a != line_a_end; ++j) {
+		
+		for (u32 i=0; i<stride; ++i) {
+			u32 tmp = line_a[i];
+			line_a[i] = line_b[i];
+			line_b[i] = tmp;
+		}
+		
+		line_a += stride;
+		line_b -= stride;
+	}
+}
+
+struct Mip {
+	byte*	data;
+	u64		size;
+	
+	iv2		dim;
 };
 
+enum tex_type {
+	TEX_TYPE_SRGB_A	=0, // srgb rgb and linear alpha
+	TEX_TYPE_SRGB	,
+	TEX_TYPE_LRGBA	,
+	TEX_TYPE_LRGB	,
+	
+	TEX_TYPE_DXT1	,
+	TEX_TYPE_DXT3	,
+	TEX_TYPE_DXT5	,
+};
+
+static bool load_dds (cstr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
+	using namespace dds_n;
+	
+	if (!read_entire_file(filepath, file_data)) return false; // fail
+	byte* cur = file_data->data;
+	byte* end = file_data->data +file_data->size;
+	
+	if (	(u64)(end -cur) < 4 ||
+			memcmp(cur, "DDS ", 4) != 0 ) return false; // fail
+	cur += 4;
+	
+	if (	(u64)(end -cur) < sizeof(DDS_HEADER) ) return false; // fail
+	
+	auto* header = (DDS_HEADER*)cur;
+	cur += sizeof(DDS_HEADER);
+	
+	dbg_assert(header->dwSize == sizeof(DDS_HEADER));
+	dbg_assert((header->dwFlags & (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT)) == (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT), "0x%x", header->dwFlags);
+	dbg_assert(header->ddspf.dwSize == sizeof(DDS_PIXELFORMAT));
+	
+	if (!(header->dwFlags & DDSD_MIPMAPCOUNT) || !(header->dwCaps & DDSCAPS_MIPMAP)) {
+		header->dwMipMapCount = 1;
+	} else {
+		dbg_assert(header->dwFlags & DDSD_MIPMAPCOUNT);
+	}
+	
+	*dim = iv2((s32)header->dwWidth, (s32)header->dwHeight);
+	
+	mips->resize(header->dwMipMapCount);
+	
+	if (header->ddspf.dwFlags & DDPF_FOURCC) {
+		if (		memcmp(&header->ddspf.dwFourCC, "DXT1", 4) == 0 )	*type = TEX_TYPE_DXT1;
+		else if (	memcmp(&header->ddspf.dwFourCC, "DXT3", 4) == 0 )	*type = TEX_TYPE_DXT3;
+		else if (	memcmp(&header->ddspf.dwFourCC, "DXT5", 4) == 0 )	*type = TEX_TYPE_DXT5;
+		else															return false; // fail
+		
+		u64 block_size = *type == TEX_TYPE_DXT1 ? 8 : 16;
+		
+		s32 w=dim->x, h=dim->y;
+		
+		for (u32 i=0; i<header->dwMipMapCount; ++i) {
+			u32 blocks_w = max( (u32)1, ((u32)w +3)/4 );
+			u32 blocks_h = max( (u32)1, ((u32)h +3)/4 );
+			
+			u64 size =	blocks_w * blocks_h * block_size;
+			if ((u64)(end -cur) < size) return false; // fail
+			
+			inplace_flip_DXT64_vertical(cur, blocks_w, blocks_h);
+			
+			(*mips)[i] = {cur, size, iv2(w,h)};
+			
+			if (w > 1) w /= 2;
+			if (h > 1) h /= 2;
+			
+			cur += size;
+		}
+		
+	} else {
+		
+		dbg_assert(header->ddspf.dwFlags & DDPF_RGB);
+		
+		switch (header->ddspf.dwRGBBitCount) {
+			case 32: {
+				dbg_assert(header->ddspf.dwFlags & DDPF_ALPHAPIXELS);
+				
+				*type = linear ? TEX_TYPE_LRGBA :	TEX_TYPE_SRGB_A;
+			} break;
+			case 24: {
+				*type = linear ? TEX_TYPE_LRGB :	TEX_TYPE_SRGB;
+			} break;
+			
+			default: dbg_assert(false);
+		}
+		
+		dbg_assert(header->dwFlags & DDSD_PITCH);
+		
+		s32 w=dim->x, h=dim->y;
+		
+		for (u32 i=0; i<header->dwMipMapCount; ++i) {
+			
+			u64 size =	h * header->dwPitchOrLinearSize;
+			if ((u64)(end -cur) < size) return false; // fail
+			
+			inplace_flip_vertical(cur, h, header->dwPitchOrLinearSize);
+			
+			(*mips)[i] = {cur, size, iv2(w,h)};
+			
+			if (w > 1) w /= 2;
+			if (h > 1) h /= 2;
+			
+			cur += size;
+		}
+	}
+	return true;
+}
+static bool load_img_stb (cstr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
+	stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
+	
+	int n;
+	file_data->data = stbi_load(filepath, &dim->x, &dim->y, &n, 0);
+	
+	switch (n) {
+		case 4:	*type = linear ? TEX_TYPE_LRGBA :	TEX_TYPE_SRGB_A;	break;
+		case 3:	*type = linear ? TEX_TYPE_LRGB :	TEX_TYPE_SRGB;		break;
+		default: dbg_assert(false);
+	}
+	
+	file_data->size = dim->x * dim->y * n;
+	
+	mips->resize(1);
+	(*mips)[0] = { file_data->data, file_data->size, *dim };
+	
+	return file_data->data != nullptr;
+}
+
+static constexpr bool	TEX_LINEAR = true;
+static constexpr bool	TEX_SRGB = true;
+
+static f32				max_aniso;
+
+static bool load_texture2d (std::string filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
+	std::string ext;
+	std::string type_ext;
+	{
+		ui i = 0;
+		std::string* exts[2] = { &ext, &type_ext };
+		
+		auto end = filepath.end();
+		
+		for (auto c = filepath.end(); c != filepath.begin();) { --c;
+			if (*c == '.') {
+				*exts[i] = std::string(c +1, end);
+				
+				end = c;
+				
+				++i;
+				if (i == 2) break;
+			}
+		}
+	}
+	
+	//printf(">>> '%s' -> '%s' '%s'\n", filepath.c_str(), type_ext.c_str(), ext.c_str());
+	
+	if (ext.compare("dds") == 0)	return load_dds(filepath.c_str(), linear, type, file_data, dim, mips);
+	else							return load_img_stb(filepath.c_str(), linear, type, file_data, dim, mips);
+}
+
 struct Texture2D {
-	GLuint		tex;
-	iv2			dim;
-	tex_type	type;
+	GLuint			tex;
 	
-	cstr		filename;
+	cstr				filename;
+	bool				linear;
 	
-	GLenum		internalFormat;
-	GLenum		format;
+	tex_type			type;
+	Data_Block			data;
+	iv2					dim;
+	std::vector<Mip>	mips;
 	
 	#if RZ_AUTO_FILE_RELOADING
 	File_Change_Poller	fc;
 	#endif
 	
-	void init_load (cstr fn, tex_type t) {
+	void init_load (cstr fn, bool l) {
 		filename = fn;
-		type = t;
+		linear = l;
 		
 		glGenTextures(1, &tex);
 		glBindTexture(GL_TEXTURE_2D, tex);
 		
-		auto filepath = prints("assets_src/textures/%s", filename);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, max_aniso);
+		
+		auto filepath = prints("%s/%s", textures_base_path, filename);
+		
+		data.data = nullptr;
 		
 		if (!reload(filepath)) {
 			log_warning_asset_load(filepath.c_str());
@@ -272,86 +549,88 @@ struct Texture2D {
 		#if RZ_AUTO_FILE_RELOADING
 		fc.init(filepath.c_str());
 		#endif
-		
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	}
 	
-	bool reload (std::string filepath) {
+	void upload_compressed (GLenum internalFormat) {
+		//GL_TEXTURE_2D == tex needs tex to be bound
 		
-		#if 0
-		std::string ext;
-		std::string type_ext;
-		{
-			ui i = 0;
-			std::string* exts[2] = { &ext, &type_ext };
+		dbg_assert((u32)mips.size() >= 1);
+		
+		s32 w=dim.x, h=dim.y;
+		
+		u32 mip_i;
+		for (mip_i=0; mip_i<(u32)mips.size();) {
+			auto& m = mips[mip_i];
 			
-			auto end = filepath.end();
+			glCompressedTexImage2D(GL_TEXTURE_2D, mip_i, internalFormat, m.dim.x,m.dim.y, 0, m.size, m.data);
 			
-			for (auto c = filepath.end(); c != filepath.begin();) { --c;
-				if (*c == '.') {
-					*exts[i] = std::string(c +1, end);
-					
-					end = c;
-					
-					++i;
-					if (i == 2) break;
-				}
-			}
+			if (++mip_i == (u32)mips.size()) break;
+			
+			if (w > 0) w /= 2;
+			if (h > 0) h /= 2;
+			if (w == 1 && h == 1) break;
 		}
 		
-		printf(">>> '%s' -> '%s' '%s'\n", filepath.c_str(), type_ext.c_str(), ext.c_str());
-		#endif
-		
-		ui bbp;
-		auto* data = load_texture2d(filepath.c_str(), &dim, &bbp);
-		
-		internalFormat = 0;
-		format = 0;
-		
-		switch (bbp) {
-			case 32:	format = GL_RGBA;	break;
-			case 24:	format = GL_RGB;	break;
-			
-			default: dbg_assert(false);
-		}
-		
-		switch (type) {
-			case TEX_TYPE_SRGB_A:
-				switch (bbp) {
-					case 32:	internalFormat = GL_SRGB8_ALPHA8;	break;
-					case 24:	internalFormat = GL_SRGB8;			break;
-					
-					default: dbg_assert(false);
-				} break;
-			
-			case TEX_TYPE_LIN_RGB:
-				switch (bbp) {
-					case 32:	internalFormat = GL_RGBA8;
-						log_warning("Texture2D:: RGBA image loaded as TEX_TYPE_LIN_RGB.");
-						break;
-					case 24:	internalFormat = GL_RGB;	break;
-					
-					default: dbg_assert(false);
-				} break;
-			
-			default: dbg_assert(false);
-		}
-		
-		if (data) {
-			glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, dim.x,dim.y, 0, format, GL_UNSIGNED_BYTE, data);
+		if (mip_i != (u32)mips.size() || w != 1 || h != 1) {
+			dbg_assert(false);
 			
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
+	}
+	void upload (GLenum format, GLenum internalFormat) {
 		
-		return data != nullptr;
+		dbg_assert((u32)mips.size() >= 1);
+		
+		s32 w=dim.x, h=dim.y;
+		
+		u32 mip_i;
+		for (mip_i=0; mip_i<(u32)mips.size();) {
+			auto& m = mips[mip_i];
+			
+			glTexImage2D(GL_TEXTURE_2D, mip_i, internalFormat, m.dim.x,m.dim.y, 0, format, GL_UNSIGNED_BYTE, m.data);
+			
+			if (++mip_i == (u32)mips.size()) break;
+			
+			if (w > 0) w /= 2;
+			if (h > 0) h /= 2;
+			if (w == 1 && h == 1) break;
+		}
+		
+		if (mip_i != (u32)mips.size() || w != 1 || h != 1) {
+			dbg_assert(mip_i == 1, "%u %u %u %u", mip_i, (u32)mips.size(), w, h);
+			
+			glGenerateMipmap(GL_TEXTURE_2D);
+		}
+	}
+	bool reload (std::string const& filepath) {
+		
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		
+		glBindTexture(GL_TEXTURE_2D, tex);
+		
+		data.free();
+		
+		if (!load_texture2d(filepath, linear, &type, &data, &dim, &mips)) return false;
+		
+		switch (type) {
+			case TEX_TYPE_SRGB_A	:	upload(GL_RGBA,	GL_SRGB8_ALPHA8);	break;
+			case TEX_TYPE_SRGB		:	upload(GL_RGB,	GL_SRGB8);			break;
+			case TEX_TYPE_LRGBA		:	upload(GL_RGBA,	GL_RGBA8);			break;
+			case TEX_TYPE_LRGB		:	upload(GL_RGB,	GL_RGB);			break;
+			
+			case TEX_TYPE_DXT1:			upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);		break;
+			case TEX_TYPE_DXT3:			upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
+			case TEX_TYPE_DXT5:			upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
+			
+			default: dbg_assert(false);
+		}
+		
+		return true;
 	}
 	
 	bool reload_if_needed () {
 		#if RZ_AUTO_FILE_RELOADING
-		auto filepath = prints("assets_src/textures/%s", filename);
+		auto filepath = prints("%s/%s", textures_base_path, filename);
 		
 		bool reloaded = fc.poll_did_change(filepath.c_str());
 		if (!reloaded) return false;
@@ -450,16 +729,16 @@ struct Shader {
 		_load(&prog);
 		
 		#if RZ_AUTO_FILE_RELOADING
-		auto vert_filepath = prints("shaders/%s", vert_filename);
-		auto frag_filepath = prints("shaders/%s", frag_filename);
+		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
+		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
 		
 		fc_vert.init(vert_filepath.c_str());
 		fc_frag.init(frag_filepath.c_str());
 		#endif
 	}
 	bool _load (GLuint* out) {
-		auto vert_filepath = prints("shaders/%s", vert_filename);
-		auto frag_filepath = prints("shaders/%s", frag_filename);
+		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
+		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
 		
 		bool res = load_program(vert_filepath.c_str(), frag_filepath.c_str(), out);
 		get_uniform_locations(*out);
@@ -495,8 +774,8 @@ struct Shader {
 	bool reload_if_needed () {
 		#if RZ_AUTO_FILE_RELOADING
 		
-		auto vert_filepath = prints("shaders/%s", vert_filename);
-		auto frag_filepath = prints("shaders/%s", frag_filename);
+		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
+		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
 		
 		bool reloaded = fc_vert.poll_did_change(vert_filepath.c_str()) || fc_frag.poll_did_change(frag_filepath.c_str());
 		if (reloaded) {

@@ -11,5 +11,5 @@ in		vec4	vs_col;
 uniform sampler2D	tex0;
 
 void main () {
-	FRAG_COL( texture(tex0, vs_uv).rgb );
+	FRAG_COL( texture(tex0, vs_uv).rgba );
 }
