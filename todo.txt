@@ -60,6 +60,8 @@ DONE:
  
  shader $include command
  
+ add dds loader
+ 
 #2017.12.6 mi. tag
  smooth edges with alpha test from http://blog.wolfire.com/2009/02/rendering-plants-with-smooth-edges/
  
@@ -68,10 +70,10 @@ DONE:
  -then check all File_Change_Pollers every time
  -when reload'ing destroy and recreate the list of File_Change_Poller, because which files get included could change
  
+ switched different mesh types to use inheritance again (virtual reload function)
+ 
 TODO
 -FEATURES:
- 
- add dds loader 
  
  development text rendering (dev_text_line() emits a line)
  

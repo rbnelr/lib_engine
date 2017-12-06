@@ -1,51 +1,30 @@
 
-#define STB_RECT_PACK_IMPLEMENTATION
-#include "stb_rect_pack.h"
-#define STB_TRUETYPE_IMPLEMENTATION
-#include "stb_truetype.h"
-
 namespace font {
 	
 	struct Glyph_Range {
-		cstr	fontname;
+		cstr				fontname;
 		
 		stbtt_pack_range	pr;
 		
-		Glyph_Range (cstr font, f32 font_size, utf32 first, utf32 last): fontname{font}, pr{font_size, (int)first, nullptr, (int)(last +1 -first), nullptr} {
-			
+		std::vector<utf32> const	arr; // storage for array of glyphs
+		
+		Glyph_Range (cstr f, f32 s, utf32 first, utf32 last):
+			fontname{f}, pr{s, (int)first, nullptr, (int)(last +1 -first), nullptr}, arr{} {}
+		Glyph_Range (cstr f, f32 s, utf32 single_char): Glyph_Range{f,s,single_char,single_char} {}
+		Glyph_Range (cstr f, f32 s, std::initializer_list<utf32> l): fontname{f}, arr{l} {
+			pr = {s, 0, (int*)arr.data(), (int)arr.size(), nullptr};
 		}
-		Glyph_Range (cstr font, f32 font_size, std::initializer_list<utf32> l): fontname{font}, pr{font_size, 0, (int*)l.begin(), (int)l.size(), nullptr} {
-			
-		}
-	};
-	
-	static std::initializer_list<utf32> ger = { U'ß',U'Ä',U'Ö',U'Ü',U'ä',U'ö',U'ü' };
-	static std::initializer_list<utf32> jp_sym = { U'　',U'、',U'。',U'”',U'「',U'」' };
-	static std::initializer_list<utf32> ws_visual = { U'·',U'—',U'→' };
-	
-	f32 sz = 24; // 14 16 24
-	f32 jpsz = floor(sz * 1.75f);
-	
-	static std::initializer_list<Glyph_Range> ranges = {
-		{ "consola.ttf",		sz,		U'\xfffd', U'\xfffd' }, // missing glyph placeholder, must be the zeroeth glyph
-		//{ "arial.ttf",	sz,		U'\0', U'\x1f' }, // control characters // does not work for some reason, even though FontForge shows that these glyphs exist at least in arial.ttf
-		{ "consola.ttf",		sz,		ws_visual }, // whitespace visualizers
-		{ "consola.ttf",		sz,		U' ', U'~' },
-		//{ "consola.ttf",		sz,		U'\x0', U'\x7f' }, // all ascii
-		{ "consola.ttf",		sz,		ger },
-		{ "meiryo.ttc",	jpsz,	U'\x3040', U'\x30ff' }, // hiragana +katakana +some jp puncuation
-		{ "meiryo.ttc",	jpsz,	jp_sym },
 	};
 	
 	static u32 texw = 512; // hopefully large enough for now
 	static u32 texh = 512;
 	
+	#if 0
 	struct Font {
 		Texture2D			tex;
-		Mesh_Vbo			vbo;
 		
-		u32						glyphs_count;
-		stbtt_packedchar*		glyphs_packed_chars;
+		u32					glyphs_count;
+		stbtt_packedchar*	glyphs_packed_chars;
 		
 		f32 border_left;
 		
@@ -54,9 +33,8 @@ namespace font {
 		
 		f32 line_height;
 		
-		bool init (cstr latin_filename) {
+		bool init () {
 			
-			vbo.init();
 			tex.alloc(texw, texh);
 			
 			cstr fonts_folder = "c:/windows/fonts/";
@@ -147,6 +125,7 @@ namespace font {
 			return true;
 		}
 		
+	#if 0
 		static int search_glyph (utf32 c) {
 			int cur = 0;
 			for (auto r : ranges) {
@@ -251,6 +230,8 @@ namespace font {
 			}
 		}
 		#endif
+	#endif
 	};
 	
+	#endif
 }

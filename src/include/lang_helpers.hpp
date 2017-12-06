@@ -153,6 +153,8 @@ static FORCEINLINE At_Scope_Exit<FUNC> operator+(_Defer_Helper, FUNC f) {
 		return val = (TYPE)((UNDERLYING_TYPE)val +1); \
 	}
 
+typedef std::string const& strcr;
+
 template<typename T, typename FUNC>
 static T* lsearch (std::vector<T>& arr, FUNC comp_with) {
 	for (T& x : arr) {

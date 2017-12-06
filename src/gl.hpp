@@ -1,5 +1,5 @@
 
-static bool load_shader_source (std::string const& filepath, std::string* src_text IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+static bool load_shader_source (strcr filepath, std::string* src_text IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
 	vector_append(fcs)->init(filepath); // put file shader depends on into the file change poll list before we even know that it exists, so that if it does not exist we automaticly (re)load the shader if it gets created
 	
 	if (!read_text_file(filepath.c_str(), src_text)) return false;
@@ -136,7 +136,7 @@ static bool get_program_link_log (GLuint prog, std::string* log) {
 	}
 }
 
-static bool load_shader (GLenum type, std::string filepath, GLuint* out IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+static bool load_shader (GLenum type, strcr filepath, GLuint* out IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
 	*out = 0;
 	
 	GLuint shad = glCreateShader(type);
@@ -177,7 +177,7 @@ static bool load_shader (GLenum type, std::string filepath, GLuint* out IF_RZ_AU
 	*out = shad;
 	return success;
 }
-static GLuint load_program (std::string vert_filepath, std::string frag_filepath, GLuint* out  IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+static GLuint load_program (std::string vert_filepath, strcr frag_filepath, GLuint* out  IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
 	
 	GLuint prog = glCreateProgram();
 	
@@ -225,14 +225,6 @@ static GLuint load_program (std::string vert_filepath, std::string frag_filepath
 static void unload_program (GLuint prog) {
 	glDeleteProgram(prog);
 }
-
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_BMP	1
-#define STBI_ONLY_PNG	1
-#define STBI_ONLY_TGA	1
-//#define STBI_ONLY_JPEG	1
-
-#include "stb_image.h"
 
 namespace dds_n {
 	typedef u32 DWORD;
@@ -488,7 +480,7 @@ static constexpr bool	TEX_SRGB = true;
 
 static f32				max_aniso;
 
-static bool load_texture2d (std::string filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
+static bool load_texture2d (strcr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
 	std::string ext;
 	std::string type_ext;
 	{
@@ -516,10 +508,10 @@ static bool load_texture2d (std::string filepath, bool linear, tex_type* type, D
 }
 
 struct Texture2D {
-	GLuint			tex;
+	GLuint				tex;
 	
 	cstr				filename;
-	bool				linear;
+	bool				linear; // linear colorspace (for normal maps, etc.)
 	
 	tex_type			type;
 	Data_Block			data;
@@ -529,6 +521,11 @@ struct Texture2D {
 	#if RZ_AUTO_FILE_RELOAD
 	File_Change_Poller	fc;
 	#endif
+	
+	void init_storage () {
+		glGenTextures(1, &tex);
+		glBindTexture(GL_TEXTURE_2D, tex);
+	}
 	
 	void init_load (cstr fn, bool l) {
 		filename = fn;
@@ -607,7 +604,7 @@ struct Texture2D {
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 	}
-	bool reload (std::string const& filepath) {
+	bool reload (strcr filepath) {
 		
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		

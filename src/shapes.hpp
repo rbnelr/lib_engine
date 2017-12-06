@@ -1,5 +1,5 @@
 
-static void gen_tetrahedron (std::vector<byte>* data, hm transform, f32 r) {
+static void gen_tetrahedron (std::vector<byte>* data, f32 r, hm transform=hm::ident()) {
 	
 	transform = transform * translateH(v3(0,0, r * (1.0f/3)));
 	
@@ -30,7 +30,7 @@ static void gen_tetrahedron (std::vector<byte>* data, hm transform, f32 r) {
 	
 	dbg_assert(out == (Mesh_Vertex*)(data->data() +data->size())); // check size calculation above
 }
-static void gen_cube (std::vector<byte>* data, hm transform, f32 r) {
+static void gen_cube (std::vector<byte>* data, f32 r, hm transform=hm::ident()) {
 	
 	transform = transform * translateH(v3(0,0,r));
 	
@@ -86,7 +86,7 @@ static void gen_cube (std::vector<byte>* data, hm transform, f32 r) {
 	
 	dbg_assert(out == (Mesh_Vertex*)(data->data() +data->size())); // check size calculation above
 }
-static void gen_cylinder (std::vector<byte>* data, hm transform, f32 r, f32 l, u32 faces) {
+static void gen_cylinder (std::vector<byte>* data, f32 r, f32 l, u32 faces, hm transform=hm::ident()) {
 	
 	transform = transform * translateH(v3(0,0,l/2));
 	
@@ -124,7 +124,7 @@ static void gen_cylinder (std::vector<byte>* data, hm transform, f32 r, f32 l, u
 	
 	dbg_assert(out == (Mesh_Vertex*)(data->data() +data->size())); // check size calculation above
 }
-static void gen_iso_sphere (std::vector<byte>* data, hm transform, f32 r, u32 wfaces, u32 hfaces) {
+static void gen_iso_sphere (std::vector<byte>* data, f32 r, u32 wfaces, u32 hfaces, hm transform=hm::ident()) {
 	
 	if (wfaces < 2 || hfaces < 2) return;
 	

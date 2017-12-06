@@ -28,6 +28,22 @@ typedef fhm		hm;
 
 #include "platform.hpp"
 
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_BMP	1
+#define STBI_ONLY_PNG	1
+#define STBI_ONLY_TGA	1
+//#define STBI_ONLY_JPEG	1
+
+#include "stb_image.h"
+
+#define STB_RECT_PACK_IMPLEMENTATION
+#include "stb_rect_pack.h"
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+
+
 #if RZ_DEV
 	#define RZ_AUTO_FILE_RELOAD 1
 #else
@@ -46,7 +62,7 @@ struct File_Change_Poller {
 	HANDLE		fh;
 	FILETIME	last_change_t;
 	
-	bool init (std::string f) {
+	bool init (strcr f) {
 		filepath = f;
 		last_change_t = {}; // zero for debuggability
 		return open();
@@ -97,6 +113,7 @@ static cstr meshes_base_path =		"assets_src";
 static cstr textures_base_path =	"assets_src";
 
 #include "gl.hpp"
+#include "font.hpp"
 
 #define UV2(name)	Uniform(T_V2, name)
 #define UV3(name)	Uniform(T_V3, name)
@@ -135,7 +152,7 @@ static constexpr v4 DEFAULT_TANG =	0;
 static constexpr v2 DEFAULT_UV =	0.5f;
 static constexpr v4 DEFAULT_COL =	1;
 
-static Vertex_Layout mesh_vert_layout = {
+static Vertex_Layout g_mesh_vert_layout = {
 	{ "pos_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
 	{ "norm_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
 	{ "tang_model",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tang_model) },
@@ -161,41 +178,56 @@ static void unbind_texture_unit (GLint tex_unit) {
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-enum mesh_type {
-	MT_FILE				=0,
-	MT_GEN_FLOOR		,
-	MT_GEN_TETRAHEDRON	,
-	MT_GEN_CUBE			,
-	MT_GEN_CYLINDER		,
-	MT_GEN_SPHERE		,
+struct Allotted_Texture {
+	GLint		tex_unit;
+	Texture2D*	tex;
+	
+	void bind () {
+		bind_texture_unit(tex_unit, tex);
+	}
 };
 
-struct Mesh {
-	cstr	name;
+//
+struct Base_Mesh;
+
+static std::vector<Base_Mesh*>		g_meshes;
+static std::vector<Base_Mesh*>		g_meshes_opaque;
+static std::vector<Base_Mesh*>		g_meshes_translucent;
+
+struct Base_Mesh {
+	cstr		name;
 	
-	v3		pos_world;
-	m3		ori;
-	v3		scale;
+	v3			pos_world;
+	m3			ori;
+	v3			scale;
 	
-	mesh_type	type;
+	Shader*		shad;
+	Shader*		shad_transp_pass2; // only for meshes that use transparency
 	
 	Vbo			vbo; // one vbo per mesh for now
-	Shader*		shad;
-	Shader*		shad_transp_pass2;
+	
+	std::vector<Allotted_Texture>	textures;
+	
+	Base_Mesh (cstr n, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+		name = n;
+		
+		pos_world = p;
+		ori = o;
+		scale = 1;
+		
+		shad =				s;
+		shad_transp_pass2 =	s2;
+		
+		vbo.init(&g_mesh_vert_layout);
+		
+		textures = t;
+		
+		g_meshes.push_back(this);
+	}
 	
 	hm get_transform () {
 		return transl_rot_scale(pos_world, ori, scale);
 	}
-	
-	struct Texture {
-		GLint		tex_unit;
-		Texture2D*	tex;
-		
-		void bind () {
-			bind_texture_unit(tex_unit, tex);
-		}
-	};
-	std::vector<Texture>	textures;
 	
 	void bind_textures () {
 		for (GLint tex_unit=0; tex_unit<MAX_TEXTURE_UNIT; ++tex_unit) {
@@ -211,177 +243,177 @@ struct Mesh {
 		for (auto& t : textures) t.bind();
 	}
 	
+	virtual void reload () = 0;
+	virtual bool reload_if_needed () = 0;
+};
+
+struct File_Mesh : public Base_Mesh {
+	
+	cstr					filename;
+	
 	#if RZ_AUTO_FILE_RELOAD
 	File_Change_Poller	fc;
 	#endif
 	
-	union {
-		struct { // MT_FILE
-			cstr					filename;
-		};
-		union { // generated
-			bool	changed;
-			
-			struct { // MT_GEN_FLOOR
-				void gen (Vbo* vbo, hm& t) { gen_tile_floor(&vbo->vertecies); };
-			} MT_GEN_FLOOR_;
-			struct { // MT_GEN_TETRAHEDRON
-				f32		radius;
-				
-				void gen (Vbo* vbo, hm& t) { gen_tetrahedron(&vbo->vertecies, t, radius); };
-			} MT_GEN_TETRAHEDRON_;
-			struct { // MT_GEN_CUBE
-				f32		radius;
-				
-				void gen (Vbo* vbo, hm& t) { gen_cube(&vbo->vertecies, t, radius); };
-			} MT_GEN_CUBE_;
-			struct { // MT_GEN_CYLINDER
-				f32		radius;
-				f32		length;
-				u32		faces;
-				
-				void gen (Vbo* vbo, hm& t) { gen_cylinder(&vbo->vertecies, t, radius, length, faces); };
-			} MT_GEN_CYLINDER_;
-			struct { // MT_GEN_SPHERE
-				f32		radius;
-				u32		wfaces;
-				u32		hfaces;
-				
-				void gen (Vbo* vbo, hm& t) { gen_iso_sphere(&vbo->vertecies, t, radius, wfaces, hfaces); };
-			} MT_GEN_SPHERE_;
-		};
-	};
+	File_Mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, s2, p, o, t} {
+		
+		filename = f;
+		reload();
+		
+		#if RZ_AUTO_FILE_RELOAD
+		auto filepath = prints("%s/%s", meshes_base_path, filename);
+		fc.init(filepath.c_str());
+		#endif
+	}
 	
-	void reload () {
+	virtual void reload () {
 		vbo.clear();
 		
-		auto t = hm::ident();
+		auto filepath = prints("%s/%s", meshes_base_path, filename);
 		
-		switch (type) {
-			case MT_FILE: {
-				auto filepath = prints("%s/%s", meshes_base_path, filename);
-				
-				printf("loading file mesh '%s'...\n", filepath.c_str());
-				
-				load_mesh(&vbo, filepath.c_str(), t);
-			} break;
-			
-			case MT_GEN_FLOOR:			MT_GEN_FLOOR_		.gen(&vbo,t);	break;
-			
-			case MT_GEN_TETRAHEDRON:	MT_GEN_TETRAHEDRON_	.gen(&vbo,t);	break;
-			case MT_GEN_CUBE:			MT_GEN_CUBE_		.gen(&vbo,t);	break;
-			case MT_GEN_CYLINDER:		MT_GEN_CYLINDER_	.gen(&vbo,t);	break;
-			case MT_GEN_SPHERE:			MT_GEN_SPHERE_		.gen(&vbo,t);	break;
-			
-		}
+		printf("Loading file mesh '%s'...\n", filename);
+		
+		load_mesh(&vbo, filepath.c_str(), hm::ident());
 		
 		vbo.upload();
 	}
-	bool reload_if_needed () {
-		switch (type) {
-			case MT_FILE: {
-				#if RZ_AUTO_FILE_RELOAD
-				if (type != MT_FILE) return false;
-				
-				bool reloaded = fc.poll_did_change();
-				if (reloaded) {
-					printf("mesh source file changed, reloading mesh \"%s\".\n", name);
-					reload();
-				}
-				
-				return reloaded;
-				#else
-				return false;
-				#endif
-			} break;
-			
-			default: return false;
+	virtual bool reload_if_needed () {
+		#if RZ_AUTO_FILE_RELOAD
+		bool reloaded = fc.poll_did_change();
+		if (reloaded) {
+			printf("mesh source file changed, reloading mesh \"%s\".\n", name);
+			reload();
 		}
+		
+		return reloaded;
+		#else
+		return false;
+		#endif
 	}
 	
 };
-
-static std::vector<Mesh*>		g_meshes;
-static std::vector<Mesh*>		g_meshes_opaque;
-static std::vector<Mesh*>		g_meshes_translucent;
-
-static Mesh* _new_generic_mesh (cstr n, Shader* s, Shader* s2, mesh_type type, v3 p, m3 o) {
-	Mesh* m = new Mesh;
-	g_meshes.push_back(m);
-	
-	m->name = n;
-	
-	m->pos_world = p;
-	m->ori = o;
-	m->scale = 1;
-	
-	m->type = type;
-	m->vbo.init(&mesh_vert_layout);
-	m->shad =				s;
-	m->shad_transp_pass2 =	s2;
-	
-	return m;
-}
-static Mesh* _new_mesh (cstr n, Shader* s, Shader* s2, v3 p, m3 o, cstr f, std::initializer_list<Mesh::Texture> t={}) {
-	Mesh* m = _new_generic_mesh(n, s, s2, MT_FILE, p, o);
-	m->filename = f;
-	m->textures = t;
-	m->reload();
-	
-	#if RZ_AUTO_FILE_RELOAD
-	auto filepath = prints("%s/%s", meshes_base_path, m->filename);
-	m->fc.init(filepath.c_str());
-	#endif
-	return m;
-}
-static Mesh* new_mesh (cstr n, Shader* s, v3 p, m3 o, cstr f, std::initializer_list<Mesh::Texture> t={}) {
-	auto* m = _new_mesh(n, s, nullptr, p, o, f, t);
+File_Mesh* new_mesh (cstr n, cstr f, Shader* s, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new File_Mesh(n,f,s,nullptr,p,o,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
-static Mesh* new_transp_mesh (cstr n, Shader* s, Shader* s2, v3 p, m3 o, cstr f, std::initializer_list<Mesh::Texture> t={}) {
-	auto* m = _new_mesh(n, s, s2, p, o, f, t);
+File_Mesh* new_transp_mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new File_Mesh(n,f,s,s2,p,o,t);
 	g_meshes_translucent.push_back(m);
 	return m;
 }
 
-static Mesh* new_gen_tile_floor		(cstr n, Shader* s, std::initializer_list<Mesh::Texture> t={}) {
-	Mesh* m = _new_generic_mesh(n, s, nullptr, MT_GEN_FLOOR, 0, m3::ident());
-	m->reload();
-	m->changed = false;
-	m->textures = t;
+struct Gen_Mesh_Floor : public Base_Mesh {
+	
+	Gen_Mesh_Floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, nullptr, 0, m3::ident(), t} {
+		reload();
+	}
+	void gen () { gen_tile_floor(&vbo.vertecies); };
+	
+	virtual void reload () {
+		vbo.clear();
+		printf("Generating mesh for %s...\n", name);
+		gen();
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () { return false; }
+};
+Gen_Mesh_Floor* new_gen_tile_floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new Gen_Mesh_Floor(n,s,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
-static Mesh* new_gen_tetrahedron	(cstr n, Shader* s, v3 p, m3 o, f32 r) {
-	Mesh* m = _new_generic_mesh(n, s, nullptr, MT_GEN_TETRAHEDRON, p, o);
-	m->MT_GEN_TETRAHEDRON_ =	{ r };
-	m->reload();
-	m->changed = false;
+
+struct Gen_Mesh_Tetrahedron : public Base_Mesh {
+	f32		radius;
+	
+	Gen_Mesh_Tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {
+		reload();
+	}
+	void gen () { gen_tetrahedron(&vbo.vertecies, radius); };
+	
+	virtual void reload () {
+		vbo.clear();
+		gen();
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () { return false; }
+};
+Gen_Mesh_Tetrahedron* new_gen_tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new Gen_Mesh_Tetrahedron(n,s,p,o,r,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
-static Mesh* new_gen_cube			(cstr n, Shader* s, v3 p, m3 o, f32 r) {
-	Mesh* m = _new_generic_mesh(n, s, nullptr, MT_GEN_CUBE, p, o);
-	m->MT_GEN_CUBE_ =			{ r };
-	m->reload();
-	m->changed = false;
+
+struct Gen_Mesh_Cube : public Base_Mesh {
+	f32		radius;
+	
+	Gen_Mesh_Cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {
+		reload();
+	}
+	void gen () { gen_cube(&vbo.vertecies, radius); };
+	
+	virtual void reload () {
+		vbo.clear();
+		gen();
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () { return false; }
+};
+Gen_Mesh_Cube* new_gen_cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new Gen_Mesh_Cube(n,s,p,o,r,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
-static Mesh* new_gen_cylinder		(cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces) {
-	Mesh* m = _new_generic_mesh(n, s, nullptr, MT_GEN_CYLINDER, p, o);
-	m->MT_GEN_CYLINDER_ =		{ r, l, faces };
-	m->reload();
-	m->changed = false;
+
+struct Gen_Mesh_Cylinder : public Base_Mesh {
+	f32		radius;
+	f32		length;
+	u32		faces;
+	
+	Gen_Mesh_Cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, length{l}, faces{faces} {
+		reload();
+	}
+	void gen () { gen_cylinder(&vbo.vertecies, radius, length, faces); };
+	
+	virtual void reload () {
+		vbo.clear();
+		gen();
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () { return false; }
+};
+Gen_Mesh_Cylinder* new_gen_cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 f, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new Gen_Mesh_Cylinder(n,s,p,o,r,l,f,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
-static Mesh* new_gen_iso_sphere		(cstr n, Shader* s, v3 p, m3 o, f32 r, u32 facesw, u32 facesh) {
-	Mesh* m = _new_generic_mesh(n, s, nullptr, MT_GEN_SPHERE, p, o);
-	m->MT_GEN_SPHERE_ =			{ r, facesw, facesh };
-	m->reload();
-	m->changed = false;
+
+struct Gen_Mesh_Iso_Sphere : public Base_Mesh {
+	f32		radius;
+	u32		wfaces;
+	u32		hfaces;
+	
+	Gen_Mesh_Iso_Sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}):
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, wfaces{fw}, hfaces{fh} {
+		reload();
+	}
+	void gen () { gen_iso_sphere(&vbo.vertecies, radius, wfaces, hfaces); };
+	
+	virtual void reload () {
+		vbo.clear();
+		gen();
+		vbo.upload();
+	}
+	virtual bool reload_if_needed () { return false; }
+};
+Gen_Mesh_Iso_Sphere* new_gen_iso_sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}) {
+	auto* m = new Gen_Mesh_Iso_Sphere(n,s,p,o,r,fw,fh,t);
 	g_meshes_opaque.push_back(m);
 	return m;
 }
@@ -533,6 +565,21 @@ int main (int argc, char** argv) {
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &max_aniso);
 	}
 	
+	{ // init game console font
+		f32 sz =	24; // 14 16 24
+		f32 jpsz =	floor(sz * 1.75f);
+		
+		std::initializer_list<font::Glyph_Range> ranges = {
+			{ "consola.ttf",	sz,		  U'\xfffd' }, // missing glyph placeholder, must be the zeroeth glyph
+			{ "consola.ttf",	sz,		  U' ', U'~' },
+			{ "consola.ttf",	sz,		{ U'ß',U'Ä',U'Ö',U'Ü',U'ä',U'ö',U'ü' } }, // german umlaute
+			{ "meiryo.ttc",		jpsz,	  U'\x3040', U'\x30ff' }, // hiragana +katakana
+			{ "meiryo.ttc",		jpsz,	{ U'　',U'、',U'。',U'”',U'「',U'」' } }, // some jp puncuation
+		};
+		
+		
+	}
+	
 	//
 	
 	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
@@ -558,8 +605,8 @@ int main (int argc, char** argv) {
 	{
 		auto* shad2 =				new_shader("mesh_vertex.vert",	"normals.frag",			{UCOM, UMAT});
 		
-		new_mesh("pedestal",				shad2,		v3(3,0,0),		rotate3_Z(deg(-70)),	"rz/pedestal.obj");
-		new_mesh("multi_obj_test",			shad2,		v3(10,0,0),		rotate3_Z(deg(-78)),	"rz/multi_obj_test.obj");
+		new_mesh("pedestal",		"rz/pedestal.obj",			shad2,		v3(3,0,0),		rotate3_Z(deg(-70)));
+		new_mesh("multi_obj_test",	"rz/multi_obj_test.obj",	shad2,		v3(10,0,0),		rotate3_Z(deg(-78)));
 		
 	}
 	{
@@ -570,13 +617,13 @@ int main (int argc, char** argv) {
 		auto* tex_cerb_metallic =	new_texture2d("cerberus/Cerberus_M.tga");
 		auto* tex_cerb_roughness =	new_texture2d("cerberus/Cerberus_R.tga");
 		
-		new_mesh("cerberus",				shad_cerb,	v3(0,0,1),		rotate3_Z(deg(45)),		"cerberus/cerberus.obj", {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
+		new_mesh("cerberus",		"cerberus/cerberus.obj",	shad_cerb,	v3(0,0,1),		rotate3_Z(deg(45)), {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
 	}
 	{
 		auto* shad =			new_shader("mesh_vertex.vert",	"nier_alpha_test.frag",		{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"a"}, {3,"b"}});
 		auto* shad2 =			new_shader("mesh_vertex.vert",	"nier_transp_pass2.frag",	{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"a"}, {3,"b"}});
 		
-		typedef std::initializer_list<Mesh::Texture>	TL;
+		typedef std::initializer_list<Allotted_Texture>	TL;
 		{
 			auto* tex_albedo =		new_texture2d("nier/2b_skin_0.dds");
 			auto* tex_a =			new_texture2d("nier/2b_skin_1.dds");
@@ -584,34 +631,34 @@ int main (int argc, char** argv) {
 			auto* tex_b =			new_texture2d("nier/2b_skin_4.dds");
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}, {3,tex_b}};
 			
-			new_mesh("2b skin",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_skin.obj", texs);
-			new_mesh("2b eyes",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_eyes.obj", texs);
+			new_mesh("2b skin",		"nier/2b_skin.obj",			shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("2b eyes",		"nier/2b_eyes.obj",			shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/2b_clothing_0.dds");
 			auto* tex_normal =		new_texture2d("nier/2b_clothing_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
 			
-			new_mesh("2b",			shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_clothes.obj", texs);
-			new_mesh("2b skirt",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_dress_skirt.obj", texs);
-			new_mesh("2b sliceb",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_alice_band.obj", texs);
-			new_mesh("2b blindf",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_blindfold.obj", texs);
+			new_mesh("2b",			"nier/2b_clothes.obj",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("2b skirt",	"nier/2b_dress_skirt.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("2b sliceb",	"nier/2b_alice_band.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("2b blindf",	"nier/2b_blindfold.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/2b_frills_hair_0.dds");
 			auto* tex_normal =		new_texture2d("nier/2b_frills_hair_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
 			
-			new_transp_mesh("2b frills",shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_dress_frills.obj", texs);
+			new_transp_mesh("2b frills","nier/2b_dress_frills.obj",	shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 			
-			new_transp_mesh("2b hair",	shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_hair.obj", texs);
+			new_transp_mesh("2b hair",	"nier/2b_hair.obj",			shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/2b_hair_thin_0.dds");
 			auto* tex_normal =		new_texture2d("nier/2b_hair_thin_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
 			
-			new_transp_mesh("2b hair thin",shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/2b_hair_thin.obj", texs);
+			new_transp_mesh("2b hair thin","nier/2b_hair_thin.obj",	shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		
 		{
@@ -621,8 +668,8 @@ int main (int argc, char** argv) {
 			auto* tex_b =			new_texture2d("nier/9s_skin_4.dds");
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}, {3,tex_b}};
 			
-			new_mesh("9s skin",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_skin.obj", texs);
-			new_mesh("9s eyes",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_eyes.obj", texs);
+			new_mesh("9s skin",		"nier/9s_skin.obj",			shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("9s eyes",		"nier/9s_eyes.obj",			shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/9s_clothing_0.dds");
@@ -630,16 +677,16 @@ int main (int argc, char** argv) {
 			auto* tex_normal =		new_texture2d("nier/9s_clothing_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
 			
-			new_mesh("9s clothes",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_clothes.obj", texs);
-			new_mesh("9s shorts",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_shorts.obj", texs);
-			new_mesh("9s blindf",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_blindfold.obj", texs);
+			new_mesh("9s clothes",	"nier/9s_clothes.obj",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("9s shorts",	"nier/9s_shorts.obj",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
+			new_mesh("9s blindf",	"nier/9s_blindfold.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/9s_hair_0.dds");
 			auto* tex_normal =		new_texture2d("nier/9s_hair_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}};
 			
-			new_transp_mesh("9s hair",shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/9s_hair.obj", texs);
+			new_transp_mesh("9s hair","nier/9s_hair.obj",		shad, shad2,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		
 		{
@@ -648,7 +695,7 @@ int main (int argc, char** argv) {
 			auto* tex_normal =		new_texture2d("nier/sword_small_2b_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
 			
-			new_mesh("sword S 2b",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/sword_small_2b.obj", texs);
+			new_mesh("sword S 2b",	"nier/sword_small_2b.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/sword_small_9s_0.dds");
@@ -656,7 +703,7 @@ int main (int argc, char** argv) {
 			auto* tex_normal =		new_texture2d("nier/sword_small_9s_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
 			
-			new_mesh("sword S 9s",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/sword_small_9s.obj", texs);
+			new_mesh("sword S 9s",	"nier/sword_small_9s.obj",	shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 		{
 			auto* tex_albedo =		new_texture2d("nier/sword_large_0.dds");
@@ -664,7 +711,7 @@ int main (int argc, char** argv) {
 			auto* tex_normal =		new_texture2d("nier/sword_large_3.dds", TEX_LINEAR);
 			TL texs =				{{0,tex_albedo}, {1,tex_normal}, {2,tex_a}};
 			
-			new_mesh("sword L",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	"nier/sword_large.obj", texs);
+			new_mesh("sword L",		"nier/sword_large.obj",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 	}
 	
