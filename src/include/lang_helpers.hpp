@@ -231,9 +231,6 @@ struct Data_Block {
 	static Data_Block alloc (u64 s) {
 		return { (byte*)malloc(s), s };
 	}
-	~Data_Block () {
-		free();
-	}
 };
 
 // reads entire file into already allocated buffer
@@ -295,4 +292,52 @@ static bool overwrite_file (cstr filename, void const* buf, u64 write_size) {
 	dbg_assert(ret == write_size);
 	
 	return true;
+}
+
+static utf32 utf8_to_utf32 (utf8 const** cur) {
+	
+	if ((*(*cur) & 0b10000000) == 0b00000000) {
+		return (utf32)(u8)(*(*cur)++);
+	}
+	if ((*(*cur) & 0b11100000) == 0b11000000) {
+		dbg_assert(((*cur)[1] & 0b11000000) == 0b10000000);
+		auto a = (utf32)(u8)(*(*cur)++ & 0b00011111);
+		auto b = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		return a<<6|b;
+	}
+	if ((*(*cur) & 0b11110000) == 0b11100000) {
+		dbg_assert(((*cur)[1] & 0b11000000) == 0b10000000);
+		dbg_assert(((*cur)[2] & 0b11000000) == 0b10000000);
+		auto a = (utf32)(u8)(*(*cur)++ & 0b00001111);
+		auto b = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		auto c = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		return a<<12|b<<6|c;
+	}
+	if ((*(*cur) & 0b11111000) == 0b11110000) {
+		dbg_assert(((*cur)[1] & 0b11000000) == 0b10000000);
+		dbg_assert(((*cur)[2] & 0b11000000) == 0b10000000);
+		dbg_assert(((*cur)[3] & 0b11000000) == 0b10000000);
+		auto a = (utf32)(u8)(*(*cur)++ & 0b00000111);
+		auto b = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		auto c = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		auto d = (utf32)(u8)(*(*cur)++ & 0b00111111);
+		return a<<18|b<<12|c<<6|d;
+	}
+	dbg_assert(false);
+	
+	return (utf32)(u32)-1;
+}
+
+static std::basic_string<utf32> utf8_to_utf32 (std::string utf8_str) {
+	std::basic_string<utf32> ret;
+	ret.reserve(utf8_str.length());
+	
+	char const* cur = utf8_str.data();
+	char const* end = cur +utf8_str.length();
+	
+	while (cur != end) {
+		ret.push_back( utf8_to_utf32(&cur) );
+	}
+	
+	return ret;
 }

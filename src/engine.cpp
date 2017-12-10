@@ -30,6 +30,7 @@ typedef fhm		hm;
 
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
 #define STBI_ONLY_BMP	1
 #define STBI_ONLY_PNG	1
 #define STBI_ONLY_TGA	1
@@ -38,9 +39,11 @@ typedef fhm		hm;
 #include "stb_image.h"
 
 #define STB_RECT_PACK_IMPLEMENTATION
+#define STBRP_STATIC
 #include "stb_rect_pack.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
 #include "stb_truetype.h"
 
 
@@ -55,6 +58,24 @@ typedef fhm		hm;
 #else
 	#define IF_RZ_AUTO_FILE_RELOAD(...)
 #endif
+
+static std::vector< std::basic_string<utf32> >		g_console_log_lines;
+
+static void logf (cstr format, ...) {
+	std::string str;
+	
+	va_list vl;
+	va_start(vl, format);
+	
+	_prints(&str, format, vl);
+	
+	va_end(vl);
+	
+	g_console_log_lines.push_back( utf8_to_utf32(str) );
+	
+	str.push_back('\n');
+	printf(str.c_str());
+}
 
 struct File_Change_Poller {
 	std::string	filepath;
@@ -115,6 +136,10 @@ static cstr textures_base_path =	"assets_src";
 #include "gl.hpp"
 #include "font.hpp"
 
+static font::Font g_console_font;
+
+static void draw_loading_screen_frame ();
+
 #define UV2(name)	Uniform(T_V2, name)
 #define UV3(name)	Uniform(T_V3, name)
 #define UM4(name)	Uniform(T_M4, name)
@@ -130,9 +155,14 @@ static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std
 }
 
 static Texture2D* new_texture2d (cstr filename, bool linear=false) {
-	Texture2D* t = new Texture2D;
+	File_Texture2D* t = new File_Texture2D;
 	g_textures.push_back(t);
+	
+	logf("Loading texture '%s'...", filename);
+	draw_loading_screen_frame();
+	
 	t->init_load(filename, linear);
+	
 	return t;
 }
 
@@ -272,7 +302,8 @@ struct File_Mesh : public Base_Mesh {
 		
 		auto filepath = prints("%s/%s", meshes_base_path, filename);
 		
-		printf("Loading file mesh '%s'...\n", filename);
+		logf("Loading file mesh '%s'...", filename);
+		draw_loading_screen_frame();
 		
 		load_mesh(&vbo, filepath.c_str(), hm::ident());
 		
@@ -422,10 +453,34 @@ Gen_Mesh_Iso_Sphere* new_gen_iso_sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u
 static f32			dt = 0;
 
 struct Input {
-	v2		mouse_look_diff =	0;
+	iv2		wnd_dim;
+	v2		wnd_dim_aspect;
+	
+	iv2		mcursor_pos_px;
+	
+	//
+	v2		mouse_look_diff;
 	
 	iv3		move_dir =			0;
 	bool	move_fast =			false;
+	
+	void get_non_callback_input () {
+		{
+			glfwGetFramebufferSize(wnd, &wnd_dim.x, &wnd_dim.y);
+			
+			v2 tmp = (v2)wnd_dim;
+			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
+		}
+		{
+			f64 x, y;
+			glfwGetCursorPos(wnd, &x, &y);
+			mcursor_pos_px = iv2((int)x, (int)y);
+		}
+	}
+	
+	v2 bottom_up_mcursor_pos () {
+		return v2(mcursor_pos_px.x, wnd_dim.y -mcursor_pos_px.y);
+	}
 };
 static Input		inp;
 
@@ -534,6 +589,64 @@ static void glfw_cursor_move_relative (GLFWwindow* window, double dx, double dy)
 	inp.mouse_look_diff += diff;
 }
 
+static Vbo		vbo_console_font;
+static Shader*	shad_font;
+
+static void draw_console_log_text () {
+	vbo_console_font.clear();
+	
+	u32 max_fully_visible_lines = max( (u32)1, (u32)floor((f32)inp.wnd_dim.y / g_console_font.line_height) );
+	
+	u32 max_buffered_lines = 1000;
+	if (g_console_log_lines.size() > max_buffered_lines) { // only keep at most max_buffered_lines lines
+		g_console_log_lines.erase( g_console_log_lines.begin(), g_console_log_lines.begin() +(g_console_log_lines.size() -max_buffered_lines));
+	}
+	
+	f32 pos_y_px = g_console_font.ascent_plus_gap;
+	
+	for (auto l = g_console_log_lines.begin() +max((s32)0, (s32)g_console_log_lines.size() -(s32)max_fully_visible_lines);
+			l!=g_console_log_lines.end(); ++l) {
+		g_console_font.draw_line(&vbo_console_font.vertecies, pos_y_px, shad_font, *l, v4(1,0,0,1));
+		pos_y_px += g_console_font.line_height;
+	}
+	
+	if (shad_font->valid()) {
+		glEnable(GL_BLEND);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+		
+		shad_font->bind();
+		shad_font->set_unif("screen_dim", (v2)inp.wnd_dim);
+		bind_texture_unit(0, &g_console_font.tex);
+		
+		vbo_console_font.upload();
+		vbo_console_font.draw_entire(shad_font);
+		
+		glEnable(GL_CULL_FACE);
+		glEnable(GL_DEPTH_TEST);
+		glDisable(GL_BLEND);
+	}
+}
+
+static void draw_loading_screen_frame () {
+	
+	glfwSetWindowTitle(wnd, prints("loading...").c_str());
+	
+	inp.mouse_look_diff = 0;
+	
+	glfwPollEvents();
+	
+	inp.get_non_callback_input();
+	
+	v4 clear_color = v4(srgb(41,49,52)*3, 1);
+	glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	
+	draw_console_log_text();
+	
+	glfwSwapBuffers(wnd);
+}
+
 int main (int argc, char** argv) {
 	
 	cstr app_name = "lib_engine";
@@ -565,8 +678,11 @@ int main (int argc, char** argv) {
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &max_aniso);
 	}
 	
-	{ // init game console font
-		f32 sz =	24; // 14 16 24
+	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
+	#define UMAT UM4("model_to_world"), UM4("world_to_cam"), UM4("cam_to_clip"), UM4("cam_to_world") // transformation uniforms
+	
+	{ // init game console overlay
+		f32 sz =	16; // 14 16 24
 		f32 jpsz =	floor(sz * 1.75f);
 		
 		std::initializer_list<font::Glyph_Range> ranges = {
@@ -577,13 +693,13 @@ int main (int argc, char** argv) {
 			{ "meiryo.ttc",		jpsz,	{ U'　',U'、',U'。',U'”',U'「',U'」' } }, // some jp puncuation
 		};
 		
+		g_console_font.init(sz, ranges);
 		
+		vbo_console_font.init(&font::g_mesh_vert_layout);
+		shad_font = new_shader("font.vert", "font.frag", {UCOM}, {{0,"glyphs"}});
 	}
 	
 	//
-	
-	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
-	#define UMAT UM4("model_to_world"), UM4("world_to_cam"), UM4("cam_to_clip"), UM4("cam_to_world") // transformation uniforms
 	
 	auto* shad_skybox =				new_shader("skybox.vert",		"skybox.frag",			{UCOM, UM4("skybox_to_clip")});
 	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",		{UCOM, UV2("tex_dim")}, {{0,"tex0"}});
@@ -592,7 +708,7 @@ int main (int argc, char** argv) {
 	//auto* tex_test =				new_texture2d("test/haha.dds");
 	//auto* tex_test =				new_texture2d("test/test.dds");
 	
-	{
+	{ // Generated meshes
 		auto* shad_vc =			new_shader("mesh_vertex.vert",	"vertex_color.frag",	{UCOM, UMAT});
 		auto* shad_diff =		new_shader("mesh_vertex.vert",	"diffuse.frag",			{UCOM, UMAT}, {{0,"tex0"}});
 		
@@ -602,14 +718,14 @@ int main (int argc, char** argv) {
 		new_gen_cylinder("cylinder",		shad_vc,	v3(-2,+2,0),	m3::ident(),			0.5f, 2, 24);
 		new_gen_iso_sphere("iso_sphere",	shad_vc,	v3(-3, 0,0),	m3::ident(),			0.5f, 64, 32);
 	}
-	{
+	{ // Meshes modeled by me
 		auto* shad2 =				new_shader("mesh_vertex.vert",	"normals.frag",			{UCOM, UMAT});
 		
 		new_mesh("pedestal",		"rz/pedestal.obj",			shad2,		v3(3,0,0),		rotate3_Z(deg(-70)));
 		new_mesh("multi_obj_test",	"rz/multi_obj_test.obj",	shad2,		v3(10,0,0),		rotate3_Z(deg(-78)));
 		
 	}
-	{
+	{ // Cerberus PBR gun
 		auto* shad_cerb =			new_shader("mesh_vertex.vert",	"cerberus.frag",		{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"metallic"}, {3,"roughness"}});
 		
 		auto* tex_cerb_albedo =		new_texture2d("cerberus/Cerberus_A.tga");
@@ -619,7 +735,7 @@ int main (int argc, char** argv) {
 		
 		new_mesh("cerberus",		"cerberus/cerberus.obj",	shad_cerb,	v3(0,0,1),		rotate3_Z(deg(45)), {{0,tex_cerb_albedo}, {1,tex_cerb_normal}, {2,tex_cerb_metallic}, {3,tex_cerb_roughness}});
 	}
-	{
+	{ // Nier models
 		auto* shad =			new_shader("mesh_vertex.vert",	"nier_alpha_test.frag",		{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"a"}, {3,"b"}});
 		auto* shad2 =			new_shader("mesh_vertex.vert",	"nier_transp_pass2.frag",	{UCOM, UMAT}, {{0,"albedo"}, {1,"normal"}, {2,"a"}, {3,"b"}});
 		
@@ -731,39 +847,21 @@ int main (int argc, char** argv) {
 			
 			//printf("frame #%5d %6.1f fps %6.2f ms  avg: %6.1f fps %6.2f ms\n", frame_i, fps, dt_ms, avg_fps, avg_dt_ms);
 			glfwSetWindowTitle(wnd, prints("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avg_fps, avg_dt_ms).c_str());
+			
+			//logf("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avg_fps, avg_dt_ms);
 		}
 		
+		inp.mouse_look_diff = 0;
+		
 		glfwPollEvents();
+		
+		inp.get_non_callback_input();
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
 		for (auto* s : g_shaders)		s->reload_if_needed();
 		for (auto* t : g_textures)		t->reload_if_needed();
 		for (auto* m : g_meshes)		m->reload_if_needed();
-		
-		iv2 wnd_dim;
-		v2	wnd_dim_aspect;
-		{
-			glfwGetFramebufferSize(wnd, &wnd_dim.x, &wnd_dim.y);
-			
-			v2 tmp = (v2)wnd_dim;
-			wnd_dim_aspect = tmp / v2(tmp.y, tmp.x);
-		}
-		v2	mouse_look_diff;
-		iv2	mcursor_pos_px;
-		{
-			mouse_look_diff = inp.mouse_look_diff;
-			inp.mouse_look_diff = 0;
-			
-			{
-				f64 x, y;
-				glfwGetCursorPos(wnd, &x, &y);
-				mcursor_pos_px = iv2((int)x, (int)y);
-			}
-		}
-		auto bottom_up_mcursor_pos = [&] () -> v2 {
-			return v2(mcursor_pos_px.x, wnd_dim.y -mcursor_pos_px.y);
-		};
 		
 		hm world_to_cam;
 		hm cam_to_world;
@@ -772,7 +870,7 @@ int main (int argc, char** argv) {
 		{
 			{
 				v2 mouse_look_sens = v2(deg(1.0f / 8)) * (cam.vfov / deg(70));
-				cam.ori_ae -= mouse_look_diff * mouse_look_sens;
+				cam.ori_ae -= inp.mouse_look_diff * mouse_look_sens;
 				cam.ori_ae.x = mymod(cam.ori_ae.x, deg(360));
 				cam.ori_ae.y = clamp(cam.ori_ae.y, deg(2), deg(180.0f -2));
 				
@@ -802,7 +900,7 @@ int main (int argc, char** argv) {
 				
 				v2 frust_scale;
 				frust_scale.y = tan(vfov / 2);
-				frust_scale.x = frust_scale.y * wnd_dim_aspect.x;
+				frust_scale.x = frust_scale.y * inp.wnd_dim_aspect.x;
 				
 				v2 frust_scale_inv = 1.0f / frust_scale;
 				
@@ -824,12 +922,12 @@ int main (int argc, char** argv) {
 		for (auto* s : g_shaders) {
 			if (s->valid()) {
 				s->bind();
-				s->set_unif("screen_dim", (v2)wnd_dim);
-				s->set_unif("mcursor_pos", bottom_up_mcursor_pos());
+				s->set_unif("screen_dim", (v2)inp.wnd_dim);
+				s->set_unif("mcursor_pos", inp.bottom_up_mcursor_pos());
 			}
 		}
 		
-		glViewport(0, 0, wnd_dim.x, wnd_dim.y);
+		glViewport(0,0, inp.wnd_dim.x,inp.wnd_dim.y);
 		
 		if (1) { // draw skybox
 			
@@ -906,15 +1004,19 @@ int main (int argc, char** argv) {
 		if (shad_overlay_tex->valid()) {
 			glEnable(GL_BLEND);
 			glDisable(GL_DEPTH_TEST);
+			glDisable(GL_CULL_FACE);
 			
 			shad_overlay_tex->bind();
 			shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim);
 			bind_texture_unit(0, tex_test);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 			
+			glEnable(GL_CULL_FACE);
 			glEnable(GL_DEPTH_TEST);
 			glDisable(GL_BLEND);
 		}
+		
+		//draw_console_log_text();
 		
 		glfwSwapBuffers(wnd);
 		

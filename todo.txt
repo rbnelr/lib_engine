@@ -72,12 +72,24 @@ DONE:
  
  switched different mesh types to use inheritance again (virtual reload function)
  
+#2017.12.9 sa.-so. nacht
+ text rendering works
+ 
+ implement text console overlayed
+ -just a scrolling text log for now
+ 
+ add a (bad) loading screen
+ 
 TODO
 -FEATURES:
  
- development text rendering (dev_text_line() emits a line)
+ implement cubemap loading (single face jpgs for humus, equirectangular .hdr for sibl)
  
- add a loading screen
+ reimplement PBR shader
+ 
+ try variadic shadow mapping
+ 
+ implement cascaded shadow maps
  
  make fullscreen toggle switch to fullscreen on the main monitor the window is on
  

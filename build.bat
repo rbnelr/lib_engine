@@ -4,7 +4,7 @@
 	color 07
 	
 	rem MSVC should be always in path
-	set LLVM=D:/Cproj/_llvm4.0/bin/
+	set LLVM=D:/Cproj/_llvm/LLVM/bin/
 	if [!GCC!] == [] set GCC=D:/pt_proj/tdm_gcc/bin/
 	
 	set ROOT=%~dp0
@@ -141,30 +141,31 @@ rem /llvm
 :llvm
 	del !ROOT!!proj!.exe
 	
-	rem -g0 this still generates a .pdb! and is disasm'able with dumpbin but does source code steppable in visual studio
-	if [!release!] == [0] (
-		set dbg=-O0 -g0 -DRZ_DBG=1
-	) else  (
-		set dbg=-O3 -g0 -DRZ_DBG=0
+	if [!mode!] == [dbg] (
+		set dbg=/Od /EHsc /Ob1 /MDd /Zi /DRZ_DBG=1 /DRZ_DEV=1
+	) else if [!mode!] == [opt] (
+		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=1
+	) else if [!mode!] == [release] (
+		set dbg=/O2 /EHsc /Ob2 /MD /Zi /Zo /Oi /DRZ_DBG=0 /DRZ_DEV=0
 	)
 	
-	set opt=!dbg! -mmmx -msse -msse2
-	rem -msse3 -mssse3 -msse4.1 -msse4.2 -mpopcnt
+	set opt=!dbg! /fp:fast /GS-
 	
-	set warn=-Wall -Wno-unused-variable -Wno-unused-function -Wno-tautological-compare
-	rem -fmax-errors=5
-	rem -Wno-unused-variable
-	rem -Wno-unused-function
-	rem -Wtautological-compare		constant if statements
+	set warn=/wd4577 /wd4005 -D_CRT_SECURE_NO_WARNINGS
+	rem /wd4005 sal_supp.h(57): warning C4005: '__useHeader': macro redefinition in windows header
+	rem /wd4577 noexcept used with no exceptions enabled
 	
-	rem !LLVM!clang++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLFW!include !SRC!!proj!.cpp -E > out.cpp
+	rem /showIncludes
+	
+	rem glfw dll
+	rem cl.exe -nologo /source-charset:utf-8 /DRZ_PLATF=1 /DRZ_ARCH=1 !opt! !warn! /I!SRC!include /I!GLFW!include /I!GLAD! /I!STB! !SRC!!proj!.cpp /Fe!ROOT!!proj!.exe /link KERNEL32.lib OPENGL32.lib !GLFW!lib-vc2015/glfw3dll.lib /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /OPT:REF
 	
 	rem glfw static link
-	!LLVM!clang -m64 !opt! !warn! -Wno-deprecated-declarations -I!GLFW_SRC!include -I!GLFW_SRC!src -c !GLFW_ONE_SRC_FILE!
+	!LLVM!clang-cl.exe -m64 -nologo !opt! !warn! /I!GLFW_SRC!include /I!GLFW_SRC!src /c !GLFW_ONE_SRC_FILE!
 	
-	!LLVM!clang++ -std=c++11 -m64 -DRZ_PLATF=1 -DRZ_ARCH=1 !opt! !warn! -I!SRC!include -I!GLAD! -I!STB! -I!GLFW_SRC!include -o !ROOT!!proj!.exe !SRC!!proj!.cpp glfw_one_source_file.o -lKERNEL32 -lUSER32 -lGDI32 -lOPENGL32 -lSHELL32
+	!LLVM!clang-cl.exe -m64 -nologo /source-charset:utf-8 /DRZ_PLATF=1 /DRZ_ARCH=1 !opt! !warn! /I!SRC!include /I!GLAD! /I!STB! /I!GLFW_SRC!include !SRC!!proj!.cpp glfw_one_source_file.obj /Fe!ROOT!!proj!.exe /link KERNEL32.lib USER32.lib GDI32.lib OPENGL32.lib SHELL32.lib /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /OPT:REF
 	
-	del *.o
+	del *.obj
 	
 	exit /b
 rem /llvm

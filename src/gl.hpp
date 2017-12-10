@@ -1,6 +1,8 @@
 
 static bool load_shader_source (strcr filepath, std::string* src_text IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
+	#if RZ_AUTO_FILE_RELOAD
 	vector_append(fcs)->init(filepath); // put file shader depends on into the file change poll list before we even know that it exists, so that if it does not exist we automaticly (re)load the shader if it gets created
+	#endif
 	
 	if (!read_text_file(filepath.c_str(), src_text)) return false;
 	
@@ -204,11 +206,11 @@ static GLuint load_program (std::string vert_filepath, strcr frag_filepath, GLui
 		success = status == GL_TRUE;
 		if (!success) {
 			// linking failed
-			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath, log_avail ? log_str.c_str() : "<no log available>");
+			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath.c_str(), log_avail ? log_str.c_str() : "<no log available>");
 		} else {
 			// linking success
 			if (log_avail) {
-				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath, log_str.c_str());
+				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath.c_str(), log_str.c_str());
 			}
 		}
 	}
@@ -350,15 +352,31 @@ struct Mip {
 };
 
 enum tex_type {
-	TEX_TYPE_SRGB_A	=0, // srgb rgb and linear alpha
-	TEX_TYPE_SRGB	,
-	TEX_TYPE_LRGBA	,
-	TEX_TYPE_LRGB	,
+	TEX_TYPE_SRGB_A8	=0, // srgb rgb and linear alpha
+	TEX_TYPE_LRGBA8		,
+	TEX_TYPE_SRGB8		,
+	TEX_TYPE_LRGB8		,
+	TEX_TYPE_LR8		,
 	
-	TEX_TYPE_DXT1	,
-	TEX_TYPE_DXT3	,
-	TEX_TYPE_DXT5	,
+	TEX_TYPE_DXT1		,
+	TEX_TYPE_DXT3		,
+	TEX_TYPE_DXT5		,
 };
+static s32 get_tex_type_size (tex_type t) {
+	switch (t) {
+		case TEX_TYPE_SRGB_A8	:	return 4 * sizeof(u8);
+		case TEX_TYPE_LRGBA8	:	return 4 * sizeof(u8);
+		case TEX_TYPE_SRGB8		:	return 3 * sizeof(u8);
+		case TEX_TYPE_LRGB8		:	return 3 * sizeof(u8);
+		case TEX_TYPE_LR8		:	return 1 * sizeof(u8);
+		
+		case TEX_TYPE_DXT1		:	return 8 * sizeof(byte);
+		case TEX_TYPE_DXT3		:	return 16 * sizeof(byte);
+		case TEX_TYPE_DXT5		:	return 16 * sizeof(byte);
+		
+		default: dbg_assert(false); return 0;
+	}
+}
 
 static bool load_dds (cstr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
 	using namespace dds_n;
@@ -425,10 +443,10 @@ static bool load_dds (cstr filepath, bool linear, tex_type* type, Data_Block* fi
 			case 32: {
 				dbg_assert(header->ddspf.dwFlags & DDPF_ALPHAPIXELS);
 				
-				*type = linear ? TEX_TYPE_LRGBA :	TEX_TYPE_SRGB_A;
+				*type = linear ? TEX_TYPE_LRGBA8 :	TEX_TYPE_SRGB_A8;
 			} break;
 			case 24: {
-				*type = linear ? TEX_TYPE_LRGB :	TEX_TYPE_SRGB;
+				*type = linear ? TEX_TYPE_LRGB8 :	TEX_TYPE_SRGB8;
 			} break;
 			
 			default: dbg_assert(false);
@@ -462,8 +480,8 @@ static bool load_img_stb (cstr filepath, bool linear, tex_type* type, Data_Block
 	file_data->data = stbi_load(filepath, &dim->x, &dim->y, &n, 0);
 	
 	switch (n) {
-		case 4:	*type = linear ? TEX_TYPE_LRGBA :	TEX_TYPE_SRGB_A;	break;
-		case 3:	*type = linear ? TEX_TYPE_LRGB :	TEX_TYPE_SRGB;		break;
+		case 4:	*type = linear ? TEX_TYPE_LRGBA8 :	TEX_TYPE_SRGB_A8;	break;
+		case 3:	*type = linear ? TEX_TYPE_LRGB8 :	TEX_TYPE_SRGB8;		break;
 		default: dbg_assert(false);
 	}
 	
@@ -507,54 +525,40 @@ static bool load_texture2d (strcr filepath, bool linear, tex_type* type, Data_Bl
 	else							return load_img_stb(filepath.c_str(), linear, type, file_data, dim, mips);
 }
 
+
 struct Texture2D {
-	GLuint				tex;
-	
-	cstr				filename;
-	bool				linear; // linear colorspace (for normal maps, etc.)
-	
 	tex_type			type;
-	Data_Block			data;
+	GLuint				tex;
 	iv2					dim;
 	std::vector<Mip>	mips;
+	Data_Block			data;
 	
-	#if RZ_AUTO_FILE_RELOAD
-	File_Change_Poller	fc;
-	#endif
-	
-	void init_storage () {
-		glGenTextures(1, &tex);
-		glBindTexture(GL_TEXTURE_2D, tex);
-	}
-	
-	void init_load (cstr fn, bool l) {
-		filename = fn;
-		linear = l;
-		
+	void init () {
 		glGenTextures(1, &tex);
 		glBindTexture(GL_TEXTURE_2D, tex);
 		
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, max_aniso);
-		
-		auto filepath = prints("%s/%s", textures_base_path, filename);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,		GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,		GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,			GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,			GL_REPEAT);
+		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,	max_aniso);
 		
 		data.data = nullptr;
-		
-		#if RZ_AUTO_FILE_RELOAD
-		fc.init(filepath);
-		#endif
-		
-		if (!reload(filepath)) {
-			log_warning_asset_load(filepath.c_str());
-		}
 	}
 	
-	void upload_compressed (GLenum internalFormat) {
-		//GL_TEXTURE_2D == tex needs tex to be bound
+	void alloc_single_mip (tex_type t, iv2 d) {
+		type = t;
+		dim = d;
+		
+		data.free();
+		data = Data_Block::alloc((u64)dim.y * (u64)dim.x * (u64)get_tex_type_size(type));
+		
+		mips.resize(1);
+		mips[0] = { data.data, data.size, dim };
+	}
+	
+	void _upload_compressed (GLenum internalFormat) {
+		//GL_TEXTURE_2D == tex; needs tex to be bound
 		
 		dbg_assert((u32)mips.size() >= 1);
 		
@@ -579,7 +583,8 @@ struct Texture2D {
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 	}
-	void upload (GLenum format, GLenum internalFormat) {
+	void _upload_uncompressed (GLenum internalFormat, GLenum format, GLenum type) {
+		//GL_TEXTURE_2D == tex; needs tex to be bound
 		
 		dbg_assert((u32)mips.size() >= 1);
 		
@@ -589,7 +594,7 @@ struct Texture2D {
 		for (mip_i=0; mip_i<(u32)mips.size();) {
 			auto& m = mips[mip_i];
 			
-			glTexImage2D(GL_TEXTURE_2D, mip_i, internalFormat, m.dim.x,m.dim.y, 0, format, GL_UNSIGNED_BYTE, m.data);
+			glTexImage2D(GL_TEXTURE_2D, mip_i, internalFormat, m.dim.x,m.dim.y, 0, format, type, m.data);
 			
 			if (++mip_i == (u32)mips.size()) break;
 			
@@ -604,33 +609,75 @@ struct Texture2D {
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 	}
-	bool reload (strcr filepath) {
+	void upload () {
 		
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		
 		glBindTexture(GL_TEXTURE_2D, tex);
 		
+		switch (type) {
+			case TEX_TYPE_SRGB_A8:	_upload_uncompressed(GL_SRGB8_ALPHA8,	GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case TEX_TYPE_LRGBA8:	_upload_uncompressed(GL_RGBA8,			GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case TEX_TYPE_SRGB8	:	_upload_uncompressed(GL_SRGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case TEX_TYPE_LRGB8	:	_upload_uncompressed(GL_RGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case TEX_TYPE_LR8	:	_upload_uncompressed(GL_R8,				GL_RED,		GL_UNSIGNED_BYTE);	break;
+				
+			case TEX_TYPE_DXT1:	_upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);	break;
+			case TEX_TYPE_DXT3:	_upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
+			case TEX_TYPE_DXT5:	_upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
+			
+			default: dbg_assert(false);
+		}
+	}
+	
+	void flip_vertical () {
+		dbg_assert(type == TEX_TYPE_LR8);
+		dbg_assert(mips.size() == 1);
+		
+		auto& m = mips[0];
+		inplace_flip_vertical(m.data, m.dim.y, m.dim.x * get_tex_type_size(type));
+	}
+	
+	virtual bool reload_if_needed () { return false; }
+};
+
+struct File_Texture2D : public Texture2D {
+	cstr				filename;
+	bool				linear; // linear colorspace (for normal maps, etc.)
+	
+	#if RZ_AUTO_FILE_RELOAD
+	File_Change_Poller	fc;
+	#endif
+	
+	void init_load (cstr fn, bool l) {
+		Texture2D::init();
+		
+		filename = fn;
+		linear = l;
+		
+		auto filepath = prints("%s/%s", textures_base_path, filename);
+		
+		#if RZ_AUTO_FILE_RELOAD
+		fc.init(filepath);
+		#endif
+		
+		if (!reload(filepath)) {
+			log_warning_asset_load(filepath.c_str());
+		}
+	}
+	
+	bool reload (strcr filepath) {
+		
 		data.free();
 		
 		if (!load_texture2d(filepath, linear, &type, &data, &dim, &mips)) return false;
 		
-		switch (type) {
-			case TEX_TYPE_SRGB_A	:	upload(GL_RGBA,	GL_SRGB8_ALPHA8);	break;
-			case TEX_TYPE_SRGB		:	upload(GL_RGB,	GL_SRGB8);			break;
-			case TEX_TYPE_LRGBA		:	upload(GL_RGBA,	GL_RGBA8);			break;
-			case TEX_TYPE_LRGB		:	upload(GL_RGB,	GL_RGB);			break;
-			
-			case TEX_TYPE_DXT1:			upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);		break;
-			case TEX_TYPE_DXT3:			upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
-			case TEX_TYPE_DXT5:			upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
-			
-			default: dbg_assert(false);
-		}
+		upload();
 		
 		return true;
 	}
 	
-	bool reload_if_needed () {
+	virtual bool reload_if_needed () {
 		#if RZ_AUTO_FILE_RELOAD
 		bool reloaded = fc.poll_did_change();
 		if (!reloaded) return false;
@@ -729,7 +776,7 @@ struct Shader {
 		
 		_load(&prog IF_RZ_AUTO_FILE_RELOAD( , &fcs ) );
 	}
-	bool _load (GLuint* out, IF_RZ_AUTO_FILE_RELOAD( std::vector<File_Change_Poller>* fcs ) ) {
+	bool _load (GLuint* out IF_RZ_AUTO_FILE_RELOAD(, std::vector<File_Change_Poller>* fcs ) ) {
 		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
 		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
 		
@@ -835,7 +882,9 @@ struct Vertex_Layout {
 	
 	Vertex_Layout (std::initializer_list<Attribute> a): attribs{a} {}
 	
-	void bind_attrib_arrays (Shader const* shad) {
+	u32 bind_attrib_arrays (Shader const* shad) {
+		u32 vertex_size = 0;
+		
 		for (auto& a : attribs) {
 			
 			GLint loc = glGetAttribLocation(shad->prog, a.name);
@@ -848,24 +897,29 @@ struct Vertex_Layout {
 				
 				GLint comps = 1;
 				GLenum type = GL_FLOAT;
+				u32 size = sizeof(f32);
 				switch (a.type) {
-					case T_FLT:	comps = 1;	type = GL_FLOAT;	break;
-					case T_V2:	comps = 2;	type = GL_FLOAT;	break;
-					case T_V3:	comps = 3;	type = GL_FLOAT;	break;
-					case T_V4:	comps = 4;	type = GL_FLOAT;	break;
+					case T_FLT:	comps = 1;	type = GL_FLOAT;	size = sizeof(f32);	break;
+					case T_V2:	comps = 2;	type = GL_FLOAT;	size = sizeof(f32);	break;
+					case T_V3:	comps = 3;	type = GL_FLOAT;	size = sizeof(f32);	break;
+					case T_V4:	comps = 4;	type = GL_FLOAT;	size = sizeof(f32);	break;
 					
-					case T_INT:	comps = 1;	type = GL_INT;		break;
-					case T_IV2:	comps = 2;	type = GL_INT;		break;
-					case T_IV3:	comps = 3;	type = GL_INT;		break;
-					case T_IV4:	comps = 4;	type = GL_INT;		break;
+					case T_INT:	comps = 1;	type = GL_INT;		size = sizeof(s32);	break;
+					case T_IV2:	comps = 2;	type = GL_INT;		size = sizeof(s32);	break;
+					case T_IV3:	comps = 3;	type = GL_INT;		size = sizeof(s32);	break;
+					case T_IV4:	comps = 4;	type = GL_INT;		size = sizeof(s32);	break;
 					
 					default: dbg_assert(false);
 				}
+				
+				vertex_size += size;
 				
 				glVertexAttribPointer(loc, comps, type, GL_FALSE, a.stride, (void*)a.offs);
 				
 			}
 		}
+		
+		return vertex_size;
 	}
 };
 
@@ -906,28 +960,32 @@ struct Vbo {
 		}
 	}
 	
-	void bind (Shader const* shad) {
+	u32 bind (Shader const* shad) {
 		
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_vert);
 		
-		layout->bind_attrib_arrays(shad);
+		u32 vertex_size = layout->bind_attrib_arrays(shad);
 		
 		if (format_is_indexed()) {
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_indx);
 		} else {
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 		}
+		
+		return vertex_size;
 	}
 	
 	void draw_entire (Shader const* shad) {
-		bind(shad);
+		u32 vertex_size = bind(shad);
 		
 		if (format_is_indexed()) {
 			if (indices.size() > 0)
 				glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, NULL);
 		} else {
-			if (vertecies.size() > 0)
-				glDrawArrays(GL_TRIANGLES, 0, vertecies.size());
+			if (vertecies.size() > 0) {
+				dbg_assert(vertecies.size() % vertex_size == 0);
+				glDrawArrays(GL_TRIANGLES, 0, vertecies.size() / vertex_size);
+			}
 		}
 	}
 };
