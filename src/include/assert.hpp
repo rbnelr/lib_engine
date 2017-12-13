@@ -19,35 +19,35 @@
 		);
 	#endif
 	
-	static void dbsleep (f32 sec) {
+	static void dbg_sleep (f32 sec) {
 		Sleep( (DWORD)(sec * 1000.0f) );
 	}
 	
 	#define IS_DEBUGGER_PRESENT()			IsDebuggerPresent()
 	#define DBGBREAK_IF_DEBUGGER_PRESENT	if (IS_DEBUGGER_PRESENT()) { DBGBREAK; }
-	#define BREAK_IF_DEBUGGING_ELSE_STALL	if (IS_DEBUGGER_PRESENT()) { DBGBREAK; } else { dbsleep(0.1f); }
+	#define BREAK_IF_DEBUGGING_ELSE_STALL	if (IS_DEBUGGER_PRESENT()) { DBGBREAK; } else { dbg_sleep(0.1f); }
 	
 #endif
 
 #if RZ_DBG
 	
-	static void _failed_dbassert (cstr cond) {
+	static void _failed_dbg_assert (cstr cond) {
 		fprintf(stderr,	ANSI_COLOUR_CODE_RED
 						"dbg_assert failed!\n"
 						"  \"%s\"\n" ANSI_COLOUR_CODE_NC, cond);
 		
 		BREAK_IF_DEBUGGING_ELSE_STALL;
 	}
-	static void _failed_dbassert (cstr cond, cstr msformat, ...) {
+	static void _failed_dbg_assert (cstr cond, cstr msg_format, ...) {
 		
 		fprintf(stderr,	ANSI_COLOUR_CODE_RED
 						"dbg_assert failed!\n"
 						"  \"%s\"\n  ", cond);
 		
 		va_list vl;
-		va_start(vl, msformat);
+		va_start(vl, msg_format);
 		
-		vfprintf(stderr, msformat, vl);
+		vfprintf(stderr, msg_format, vl);
 		
 		va_end(vl);
 		
@@ -62,7 +62,7 @@
 		#define MSVC_FUNC_NAME
 	#endif
 	
-	#define dbg_assert(cond, ...)	if (!(cond)) _failed_dbassert(__FILE__ ":" TO_STRING(__LINE__) MSVC_FUNC_NAME ":\n    '" STRINGIFY(cond), ##__VA_ARGS__)
+	#define dbg_assert(cond, ...)	if (!(cond)) _failed_dbg_assert(__FILE__ ":" TO_STRING(__LINE__) MSVC_FUNC_NAME ":\n    '" STRINGIFY(cond), ##__VA_ARGS__)
 	
 #else
 	

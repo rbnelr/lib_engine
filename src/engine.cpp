@@ -849,11 +849,11 @@ int main (int argc, char** argv) {
 			f32 fps = 1.0f / dt;
 			f32 dt_ms = dt * 1000;
 			
-			f32 avfps = 1.0f / avg_dt;
+			f32 avg_fps = 1.0f / avg_dt;
 			f32 avdt_ms = avg_dt * 1000;
 			
-			//printf("frame #%5d %6.1f fps %6.2f ms  avg: %6.1f fps %6.2f ms\n", frame_i, fps, dt_ms, avfps, avdt_ms);
-			glfwSetWindowTitle(wnd, prints("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avfps, avdt_ms).c_str());
+			//printf("frame #%5d %6.1f fps %6.2f ms  avg: %6.1f fps %6.2f ms\n", frame_i, fps, dt_ms, avg_fps, avdt_ms);
+			glfwSetWindowTitle(wnd, prints("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avg_fps, avdt_ms).c_str());
 		}
 		
 		inp.mouse_look_diff = 0;

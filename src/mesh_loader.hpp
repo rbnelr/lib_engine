@@ -643,22 +643,22 @@ static bool load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 				//vert[v_i].col *= v4(1,1,0,1);
 			} else {
 				// average tangent and bitangent
-				v3 avtang = total_tang / (f32)count;
-				v3 avbitang = total_bitang / (f32)count;
+				v3 avg_tang = total_tang / (f32)count;
+				v3 avg_bitang = total_bitang / (f32)count;
 				
-				if (length(avtang) < 0.05f || length(avbitang) < 0.05f) { // vectors could cancel out
+				if (length(avg_tang) < 0.05f || length(avg_bitang) < 0.05f) { // vectors could cancel out
 					//con_logf_warning();
 					//vert[v_i].col *= v4(0,1,0,1);
 				}
 				
-				avtang = normalize(avtang);
-				avbitang = normalize(avbitang);
+				avg_tang = normalize(avg_tang);
+				avg_bitang = normalize(avg_bitang);
 				
 				v3 norm = vert[v_i].norm_model;
 				
-				f32 bitansign = calc_bitansign(avtang, avbitang, norm);
+				f32 bitansign = calc_bitansign(avg_tang, avg_bitang, norm);
 				
-				vert[v_i].tanmodel = v4(avtang, bitansign);
+				vert[v_i].tanmodel = v4(avg_tang, bitansign);
 			}
 			
 		}
