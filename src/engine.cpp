@@ -46,22 +46,9 @@ typedef fhm		hm;
 #define STBTT_STATIC
 #include "stb_truetype.h"
 
+static std::vector< std::basic_string<utf32> >		console_log_lines;
 
-#if RZ_DEV
-	#define RZ_AUTO_FILE_RELOAD 1
-#else
-	#define RZ_AUTO_FILE_RELOAD 0
-#endif
-
-#if RZ_AUTO_FILE_RELOAD
-	#define IF_RZ_AUTO_FILE_RELOAD(...) __VA_ARGS__
-#else
-	#define IF_RZ_AUTO_FILE_RELOAD(...)
-#endif
-
-static std::vector< std::basic_string<utf32> >		g_console_log_lines;
-
-static void logf (cstr format, ...) {
+static void con_logf (cstr format, ...) {
 	std::string str;
 	
 	va_list vl;
@@ -71,23 +58,44 @@ static void logf (cstr format, ...) {
 	
 	va_end(vl);
 	
-	g_console_log_lines.push_back( utf8_to_utf32(str) );
+	console_log_lines.push_back( utf8_to_utf32(str) );
 	
 	str.push_back('\n');
 	printf(str.c_str());
 }
 
-struct File_Change_Poller {
-	std::string	filepath;
+static void con_logf_warning (cstr format, ...) {
+	std::string str;
+	
+	va_list vl;
+	va_start(vl, format);
+	
+	_prints(&str, format, vl);
+	
+	va_end(vl);
+	
+	console_log_lines.push_back( utf8_to_utf32(prints("[WARNING]  %s", str.c_str())) );
+	
+	printf(ANSI_COLOUR_CODE_YELLOW "%s\n" ANSI_COLOUR_CODE_NC, str.c_str());
+}
+
+//
+static cstr shaders_base_path =		"shaders/";
+static cstr meshes_base_path =		"assets_src";
+static cstr textures_base_path =	"assets_src";
+
+struct Tracked_File {
+	str			filepath;
 	
 	HANDLE		fh;
 	FILETIME	last_change_t;
 	
-	bool init (strcr f) {
+	void init (strcr f) {
 		filepath = f;
 		last_change_t = {}; // zero for debuggability
-		return open();
+		open();
 	}
+	
 	bool open () {
 		fh = CreateFile(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (fh != INVALID_HANDLE_VALUE) {
@@ -123,46 +131,47 @@ struct File_Change_Poller {
 	}
 };
 
-static void log_warning_asset_load (cstr asset, cstr reason="") {
-	log_warning("\"%s\" could not be loaded!%s", asset, reason);
-}
+struct Source_Files {
+	std::vector<Tracked_File>	v;
+	
+	bool poll_did_change () {
+		for (auto& i : v) if (i.poll_did_change()) return true;
+		return false;
+	}
+	void close_all () {
+		for (auto& i : v) i.close();
+	}
+};
 
 typedef u32 vert_indx_t;
 
-static cstr shaders_base_path =		"shaders";
-static cstr meshes_base_path =		"assets_src";
-static cstr textures_base_path =	"assets_src";
+static bool startup;
+static void draw_loadinscreen_frame ();
 
 #include "gl.hpp"
 #include "font.hpp"
 
-static font::Font g_console_font;
-
-static void draw_loading_screen_frame ();
+static font::Font console_font;
 
 #define UV2(name)	Uniform(T_V2, name)
 #define UV3(name)	Uniform(T_V3, name)
 #define UM4(name)	Uniform(T_M4, name)
 
-static std::vector<Shader*>		g_shaders;
-static std::vector<Texture2D*>	g_textures;
+static std::vector<Shader*>		shaders;
+static std::vector<Texture2D*>	textures;
 
 static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std::initializer_list<Shader::Uniform_Texture> t={}) {
-	Shader* s = new Shader;
-	g_shaders.push_back(s);
-	s->init_load(v, f, u, t);
+	Shader* s = new Shader(v,f,u,t);
+	
+	s->load(); // NOTE: Load shaders instantly on creation
+	
+	shaders.push_back(s);
 	return s;
 }
 
 static Texture2D* new_texture2d (cstr filename, bool linear=false) {
-	File_Texture2D* t = new File_Texture2D;
-	g_textures.push_back(t);
-	
-	logf("Loading texture '%s'...", filename);
-	draw_loading_screen_frame();
-	
-	t->init_load(filename, linear);
-	
+	File_Texture2D* t = new File_Texture2D(filename, linear);
+	textures.push_back(t);
 	return t;
 }
 
@@ -170,7 +179,7 @@ static Texture2D* new_texture2d (cstr filename, bool linear=false) {
 struct Mesh_Vertex {
 	v3	pos_model;
 	v3	norm_model;
-	v4	tang_model;
+	v4	tanmodel;
 	v2	uv;
 	v4	col;
 	
@@ -182,10 +191,10 @@ static constexpr v4 DEFAULT_TANG =	0;
 static constexpr v2 DEFAULT_UV =	0.5f;
 static constexpr v4 DEFAULT_COL =	1;
 
-static Vertex_Layout g_mesh_vert_layout = {
+static Vertex_Layout mesh_vert_layout = {
 	{ "pos_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
 	{ "norm_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
-	{ "tang_model",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tang_model) },
+	{ "tanmodel",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tanmodel) },
 	{ "uv",			T_V2, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, uv) },
 	{ "col",		T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, col) }
 };
@@ -220,9 +229,9 @@ struct Allotted_Texture {
 //
 struct Base_Mesh;
 
-static std::vector<Base_Mesh*>		g_meshes;
-static std::vector<Base_Mesh*>		g_meshes_opaque;
-static std::vector<Base_Mesh*>		g_meshes_translucent;
+static std::vector<Base_Mesh*>		meshes;
+static std::vector<Base_Mesh*>		meshes_opaque;
+static std::vector<Base_Mesh*>		meshes_translucent;
 
 struct Base_Mesh {
 	cstr		name;
@@ -248,11 +257,11 @@ struct Base_Mesh {
 		shad =				s;
 		shad_transp_pass2 =	s2;
 		
-		vbo.init(&g_mesh_vert_layout);
+		vbo.init(&mesh_vert_layout);
 		
 		textures = t;
 		
-		g_meshes.push_back(this);
+		meshes.push_back(this);
 	}
 	
 	hm get_transform () {
@@ -273,87 +282,87 @@ struct Base_Mesh {
 		for (auto& t : textures) t.bind();
 	}
 	
-	virtual void reload () = 0;
+	virtual void load () = 0;
 	virtual bool reload_if_needed () = 0;
 };
 
 struct File_Mesh : public Base_Mesh {
 	
-	cstr					filename;
+	str				filename;
 	
-	#if RZ_AUTO_FILE_RELOAD
-	File_Change_Poller	fc;
-	#endif
+	Tracked_File	srcf;
 	
 	File_Mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, s2, p, o, t} {
 		
 		filename = f;
-		reload();
 		
-		#if RZ_AUTO_FILE_RELOAD
-		auto filepath = prints("%s/%s", meshes_base_path, filename);
-		fc.init(filepath.c_str());
-		#endif
+		auto filepath = prints("%s/%s", meshes_base_path, filename.c_str());
+		
+		srcf.init(filepath);
 	}
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
 		
-		auto filepath = prints("%s/%s", meshes_base_path, filename);
+		f64 begin;
+		if (1) {
+			con_logf("Loading mesh '%s'...", filename.c_str());
+			if (startup) draw_loadinscreen_frame();
+			
+			begin = glfwGetTime();
+		}
 		
-		logf("Loading file mesh '%s'...", filename);
-		draw_loading_screen_frame();
+		load_mesh(&vbo, srcf.filepath.c_str(), hm::ident());
 		
-		load_mesh(&vbo, filepath.c_str(), hm::ident());
-		
-		vbo.upload();
+		if (1) {
+			auto dt = glfwGetTime() -begin;
+			con_logf(">>> %f ms", dt * 1000);
+		}
 	}
 	virtual bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOAD
-		bool reloaded = fc.poll_did_change();
+		bool reloaded = srcf.poll_did_change();
 		if (reloaded) {
-			printf("mesh source file changed, reloading mesh \"%s\".\n", name);
-			reload();
+			con_logf("mesh source file changed, reloading mesh \"%s\".\n", filename);
+			load();
+			vbo.upload();
 		}
 		
 		return reloaded;
-		#else
-		return false;
-		#endif
+	}
+	
+	~File_Mesh () {
+		srcf.close();
 	}
 	
 };
 File_Mesh* new_mesh (cstr n, cstr f, Shader* s, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new File_Mesh(n,f,s,nullptr,p,o,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 File_Mesh* new_transp_mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new File_Mesh(n,f,s,s2,p,o,t);
-	g_meshes_translucent.push_back(m);
+	meshes_translucent.push_back(m);
 	return m;
 }
 
 struct Gen_Mesh_Floor : public Base_Mesh {
 	
 	Gen_Mesh_Floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}):
-			Base_Mesh{n, s, nullptr, 0, m3::ident(), t} {
-		reload();
-	}
+			Base_Mesh{n, s, nullptr, 0, m3::ident(), t} {}
 	void gen () { gen_tile_floor(&vbo.vertecies); };
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
-		printf("Generating mesh for %s...\n", name);
+		con_logf("Generating mesh for %s...", name);
 		gen();
-		vbo.upload();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
 Gen_Mesh_Floor* new_gen_tile_floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Floor(n,s,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -361,21 +370,18 @@ struct Gen_Mesh_Tetrahedron : public Base_Mesh {
 	f32		radius;
 	
 	Gen_Mesh_Tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
-			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {
-		reload();
-	}
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {}
 	void gen () { gen_tetrahedron(&vbo.vertecies, radius); };
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
 		gen();
-		vbo.upload();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
 Gen_Mesh_Tetrahedron* new_gen_tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Tetrahedron(n,s,p,o,r,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -383,21 +389,18 @@ struct Gen_Mesh_Cube : public Base_Mesh {
 	f32		radius;
 	
 	Gen_Mesh_Cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
-			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {
-		reload();
-	}
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {}
 	void gen () { gen_cube(&vbo.vertecies, radius); };
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
 		gen();
-		vbo.upload();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
 Gen_Mesh_Cube* new_gen_cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Cube(n,s,p,o,r,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -407,21 +410,18 @@ struct Gen_Mesh_Cylinder : public Base_Mesh {
 	u32		faces;
 	
 	Gen_Mesh_Cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces, std::initializer_list<Allotted_Texture> t={}):
-			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, length{l}, faces{faces} {
-		reload();
-	}
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, length{l}, faces{faces} {}
 	void gen () { gen_cylinder(&vbo.vertecies, radius, length, faces); };
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
 		gen();
-		vbo.upload();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
 Gen_Mesh_Cylinder* new_gen_cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 f, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Cylinder(n,s,p,o,r,l,f,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -431,21 +431,18 @@ struct Gen_Mesh_Iso_Sphere : public Base_Mesh {
 	u32		hfaces;
 	
 	Gen_Mesh_Iso_Sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}):
-			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, wfaces{fw}, hfaces{fh} {
-		reload();
-	}
+			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, wfaces{fw}, hfaces{fh} {}
 	void gen () { gen_iso_sphere(&vbo.vertecies, radius, wfaces, hfaces); };
 	
-	virtual void reload () {
+	virtual void load () {
 		vbo.clear();
 		gen();
-		vbo.upload();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
 Gen_Mesh_Iso_Sphere* new_gen_iso_sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Iso_Sphere(n,s,p,o,r,fw,fh,t);
-	g_meshes_opaque.push_back(m);
+	meshes_opaque.push_back(m);
 	return m;
 }
 
@@ -506,18 +503,18 @@ static Camera		cam;
 static void load_game () {
 	bool loaded = read_entire_file(SAVE_FILE, &cam, sizeof(cam));
 	if (loaded) {
-		printf("camera_view loaded from \"" SAVE_FILE "\".\n");
+		con_logf("camera_view loaded from \"" SAVE_FILE "\".");
 	} else {
 		cam = default_camera;
-		printf("camera_view could not be loaded from \"" SAVE_FILE "\", using defaults.\n");
+		con_logf_warning("camera_view could not be loaded from \"" SAVE_FILE "\", using defaults.");
 	}
 }
 static void save_game () {
 	bool saved = overwrite_file(SAVE_FILE, &cam, sizeof(cam));
 	if (saved) {
-		printf("camera_view saved to \"" SAVE_FILE "\".\n");
+		con_logf("camera_view saved to \"" SAVE_FILE "\".");
 	} else {
-		log_warning("could not write \"" SAVE_FILE "\", camera_view wont be loaded on next launch.");
+		con_logf_warning("could not write \"" SAVE_FILE "\", camera_view wont be loaded on next launch.");
 	}
 }
 
@@ -577,7 +574,7 @@ static void glfw_mouse_scroll (GLFWwindow* window, double xoffset, double yoffse
 	if (!inp.move_fast) {
 		f32 delta_log = 0.1f * (f32)yoffset;
 		cam.fly_vel = pow( 2, log2(cam.fly_vel) +delta_log );
-		printf(">>> fly_vel: %f\n", cam.fly_vel);
+		con_logf(">>> fly_vel: %f\n", cam.fly_vel);
 	} else {
 		f32 delta_log = -0.1f * (f32)yoffset;
 		f32 vfov = pow( 2, log2(cam.vfov) +delta_log );
@@ -592,22 +589,22 @@ static void glfw_cursor_move_relative (GLFWwindow* window, double dx, double dy)
 static Vbo		vbo_console_font;
 static Shader*	shad_font;
 
-static void draw_console_log_text () {
+static void draw_console_log_text (v4 text_col) {
 	vbo_console_font.clear();
 	
-	u32 max_fully_visible_lines = max( (u32)1, (u32)floor((f32)inp.wnd_dim.y / g_console_font.line_height) );
+	u32 max_fully_visible_lines = max( (u32)1, (u32)floor((f32)inp.wnd_dim.y / console_font.line_height) );
 	
 	u32 max_buffered_lines = 1000;
-	if (g_console_log_lines.size() > max_buffered_lines) { // only keep at most max_buffered_lines lines
-		g_console_log_lines.erase( g_console_log_lines.begin(), g_console_log_lines.begin() +(g_console_log_lines.size() -max_buffered_lines));
+	if (console_log_lines.size() > max_buffered_lines) { // only keep at most max_buffered_lines lines
+		console_log_lines.erase( console_log_lines.begin(), console_log_lines.begin() +(console_log_lines.size() -max_buffered_lines));
 	}
 	
-	f32 pos_y_px = g_console_font.ascent_plus_gap;
+	f32 pos_y_px = console_font.ascent_plus_gap;
 	
-	for (auto l = g_console_log_lines.begin() +max((s32)0, (s32)g_console_log_lines.size() -(s32)max_fully_visible_lines);
-			l!=g_console_log_lines.end(); ++l) {
-		g_console_font.draw_line(&vbo_console_font.vertecies, pos_y_px, shad_font, *l, v4(1,0,0,1));
-		pos_y_px += g_console_font.line_height;
+	for (auto l = console_log_lines.begin() +max((s32)0, (s32)console_log_lines.size() -(s32)max_fully_visible_lines);
+			l!=console_log_lines.end(); ++l) {
+		console_font.draw_line(&vbo_console_font.vertecies, pos_y_px, shad_font, *l, text_col);
+		pos_y_px += console_font.line_height;
 	}
 	
 	if (shad_font->valid()) {
@@ -617,7 +614,7 @@ static void draw_console_log_text () {
 		
 		shad_font->bind();
 		shad_font->set_unif("screen_dim", (v2)inp.wnd_dim);
-		bind_texture_unit(0, &g_console_font.tex);
+		bind_texture_unit(0, &console_font.tex);
 		
 		vbo_console_font.upload();
 		vbo_console_font.draw_entire(shad_font);
@@ -628,7 +625,7 @@ static void draw_console_log_text () {
 	}
 }
 
-static void draw_loading_screen_frame () {
+static void draw_loadinscreen_frame () {
 	
 	glfwSetWindowTitle(wnd, prints("loading...").c_str());
 	
@@ -642,7 +639,7 @@ static void draw_loading_screen_frame () {
 	glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
 	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 	
-	draw_console_log_text();
+	draw_console_log_text(v4(1,1,1,1));
 	
 	glfwSwapBuffers(wnd);
 }
@@ -678,6 +675,8 @@ int main (int argc, char** argv) {
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &max_aniso);
 	}
 	
+	startup = true;
+	
 	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
 	#define UMAT UM4("model_to_world"), UM4("world_to_cam"), UM4("cam_to_clip"), UM4("cam_to_world") // transformation uniforms
 	
@@ -693,9 +692,9 @@ int main (int argc, char** argv) {
 			{ "meiryo.ttc",		jpsz,	{ U'　',U'、',U'。',U'”',U'「',U'」' } }, // some jp puncuation
 		};
 		
-		g_console_font.init(sz, ranges);
+		console_font.init(sz, ranges);
 		
-		vbo_console_font.init(&font::g_mesh_vert_layout);
+		vbo_console_font.init(&font::mesh_vert_layout);
 		shad_font = new_shader("font.vert", "font.frag", {UCOM}, {{0,"glyphs"}});
 	}
 	
@@ -831,10 +830,18 @@ int main (int argc, char** argv) {
 		}
 	}
 	
+	for (auto* i : meshes)		i->load();
+	for (auto* i : textures)	i->load();
+	
+	for (auto* i : meshes)		i->vbo.upload();
+	for (auto* i : textures)	i->upload();
+	
+	startup = false;
+	
 	// 
 	f64 prev_t = glfwGetTime();
 	f32 avg_dt = 1.0f / 60;
-	f32 abg_dt_alpha = 0.025f;
+	f32 avg_dt_alpha = 0.025f;
 	
 	for (u32 frame_i=0;; ++frame_i) {
 		
@@ -842,13 +849,11 @@ int main (int argc, char** argv) {
 			f32 fps = 1.0f / dt;
 			f32 dt_ms = dt * 1000;
 			
-			f32 avg_fps = 1.0f / avg_dt;
-			f32 avg_dt_ms = avg_dt * 1000;
+			f32 avfps = 1.0f / avg_dt;
+			f32 avdt_ms = avg_dt * 1000;
 			
-			//printf("frame #%5d %6.1f fps %6.2f ms  avg: %6.1f fps %6.2f ms\n", frame_i, fps, dt_ms, avg_fps, avg_dt_ms);
-			glfwSetWindowTitle(wnd, prints("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avg_fps, avg_dt_ms).c_str());
-			
-			//logf("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avg_fps, avg_dt_ms);
+			//printf("frame #%5d %6.1f fps %6.2f ms  avg: %6.1f fps %6.2f ms\n", frame_i, fps, dt_ms, avfps, avdt_ms);
+			glfwSetWindowTitle(wnd, prints("%s %6d  %6.1f fps avg %6.2f ms avg", app_name, frame_i, avfps, avdt_ms).c_str());
 		}
 		
 		inp.mouse_look_diff = 0;
@@ -859,9 +864,9 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		for (auto* s : g_shaders)		s->reload_if_needed();
-		for (auto* t : g_textures)		t->reload_if_needed();
-		for (auto* m : g_meshes)		m->reload_if_needed();
+		for (auto* s : shaders)		s->reload_if_needed();
+		for (auto* t : textures)	t->reload_if_needed();
+		for (auto* m : meshes)		m->reload_if_needed();
 		
 		hm world_to_cam;
 		hm cam_to_world;
@@ -919,7 +924,7 @@ int main (int argc, char** argv) {
 			skybox_to_clip = cam_to_clip * world_to_cam_rot;
 		}
 		
-		for (auto* s : g_shaders) {
+		for (auto* s : shaders) {
 			if (s->valid()) {
 				s->bind();
 				s->set_unif("screen_dim", (v2)inp.wnd_dim);
@@ -951,7 +956,7 @@ int main (int argc, char** argv) {
 		}
 		glClear(GL_DEPTH_BUFFER_BIT);
 		
-		for (auto* m : g_meshes_opaque) {
+		for (auto* m : meshes_opaque) {
 			if (m->shad->valid()) {
 				m->bind_textures();
 				
@@ -967,7 +972,7 @@ int main (int argc, char** argv) {
 			}
 		}
 		
-		for (auto* m : g_meshes_translucent) {
+		for (auto* m : meshes_translucent) {
 			
 			m->bind_textures();
 			
@@ -1016,7 +1021,7 @@ int main (int argc, char** argv) {
 			glDisable(GL_BLEND);
 		}
 		
-		//draw_console_log_text();
+		if (1) draw_console_log_text(v4(0,0,0, 1));
 		
 		glfwSwapBuffers(wnd);
 		
@@ -1025,7 +1030,7 @@ int main (int argc, char** argv) {
 			dt = now -prev_t;
 			prev_t = now;
 			
-			avg_dt = lerp(avg_dt, dt, abg_dt_alpha);
+			avg_dt = lerp(avg_dt, dt, avg_dt_alpha);
 		}
 	}
 	

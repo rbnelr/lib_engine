@@ -69,14 +69,14 @@ static void toggle_fullscreen () {
 #define GL_VAOS_REQUIRED	GL_VER_MAJOR >= 3 && GL_VER_MINOR >= 2
 
 #if GL_VAOS_REQUIRED
-GLuint	g_vao;
+GLuint	vao;
 #endif
 
 static void glfw_error_proc (int err, const char* msg) {
-	fprintf(stderr, ANSI_COLOUR_CODE_RED "GLFW Error! 0x%x '%s'\n" ANSI_COLOUR_CODE_NC, err, msg);
+	dbg_assert(false, "GLFW Error! 0x%x '%s'\n", err, msg);
 }
 
-static void APIENTRY ogl_debug_proc (GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, cstr message, void const* userParam) {
+static void APIENTRY ogl_debuproc (GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, cstr message, void const* userParam) {
 	
 	//if (source == GL_DEBUG_SOURCE_SHADER_COMPILER_ARB) return;
 	
@@ -126,7 +126,7 @@ static void APIENTRY ogl_debug_proc (GLenum source, GLenum type, GLuint id, GLen
 		dbg_assert(false, "OpenGL debug proc: severity: %s src: %s type: %s id: %d  %s\n",
 				severity_str, src_str, type_str, id, message);
 	} else {
-		log_warning("OpenGL debug proc: severity: %s src: %s type: %s id: %d  %s\n",
+		dbg_warning("OpenGL debug proc: severity: %s src: %s type: %s id: %d  %s\n",
 				severity_str, src_str, type_str, id, message);
 	}
 }
@@ -179,13 +179,13 @@ static void platform_setup_context_and_open_window (cstr inital_wnd_title, iv2 d
 	gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 	
 	if (GLAD_GL_ARB_debug_output) {
-		glDebugMessageCallbackARB(ogl_debug_proc, 0);
-		//DEBUG_OUTPUT_SYNCHRONOUS_ARB this exists -> if ogl_debug_proc needs to be thread safe
+		glDebugMessageCallbackARB(ogl_debuproc, 0);
+		//DEBUG_OUTPUT_SYNCHRONOUS_ARB this exists -> if ogl_debuproc needs to be thread safe
 	}
 	
 	if (GL_VAOS_REQUIRED) {
-		glGenVertexArrays(1, &g_vao);
-		glBindVertexArray(g_vao);
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
 	}
 	
 }
@@ -200,7 +200,7 @@ static void platform_terminate () {
 		if (pos_saved) {
 			printf("window_positioning saved to \"" WINDOW_POSITIONING_FILE "\".\n");
 		} else {
-			log_warning("could not write \"" WINDOW_POSITIONING_FILE "\", window_positioning won't be restored on next launch.");
+			dbg_warning("could not write \"" WINDOW_POSITIONING_FILE "\", window_positioning won't be restored on next launch.");
 		}
 	}
 	

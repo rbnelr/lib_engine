@@ -7,7 +7,7 @@ namespace font {
 		v4	col;
 	};
 
-	static Vertex_Layout g_mesh_vert_layout = {
+	static Vertex_Layout mesh_vert_layout = {
 		{ "pos_screen",	T_V2, sizeof(Glyph_Vertex), offsetof(Glyph_Vertex, pos_screen) },
 		{ "uv",			T_V2, sizeof(Glyph_Vertex), offsetof(Glyph_Vertex, uv) },
 		{ "col",		T_V4, sizeof(Glyph_Vertex), offsetof(Glyph_Vertex, col) },
@@ -18,7 +18,7 @@ namespace font {
 		
 		stbtt_pack_range	pr;
 		
-		std::vector<utf32> const	arr; // storage for array of glyphs
+		std::vector<utf32>	arr; // storage for array of glyphs
 		
 		Glyph_Range (cstr f, f32 s, utf32 first, utf32 last):
 			fontname{f}, pr{s, (int)first, nullptr, (int)(last +1 -first), nullptr}, arr{} {}

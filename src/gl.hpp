@@ -1,233 +1,4 @@
 
-static bool load_shader_source (strcr filepath, std::string* src_text IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
-	#if RZ_AUTO_FILE_RELOAD
-	vector_append(fcs)->init(filepath); // put file shader depends on into the file change poll list before we even know that it exists, so that if it does not exist we automaticly (re)load the shader if it gets created
-	#endif
-	
-	if (!read_text_file(filepath.c_str(), src_text)) return false;
-	
-	for (auto c=src_text->begin(); c!=src_text->end();) {
-		
-		if (*c == '$') {
-			auto line_begin = c;
-			++c;
-			
-			auto syntax_error = [&] () {
-				
-				while (*c != '\n' && *c != '\r') ++c;
-				std::string line (line_begin, c);
-				
-				log_warning("load_shader_source:: expected '$include \"filename\"' syntax but got: '%s'!", line.c_str());
-			};
-			
-			while (*c == ' ' || *c == '\t') ++c;
-			
-			auto cmd = c;
-			
-			while ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_') ++c;
-			
-			if (std::string(cmd, c).compare("include") == 0) {
-				
-				while (*c == ' ' || *c == '\t') ++c;
-				
-				if (*c != '"') {
-					syntax_error();
-					return false;
-				}
-				++c;
-				
-				auto filename_str_begin = c;
-				
-				while (*c != '"') ++c;
-				
-				std::string filename_str (filename_str_begin, c);
-				
-				if (*c != '"') {
-					syntax_error();
-					return false;
-				}
-				++c;
-				
-				while (*c == ' ' || *c == '\t') ++c;
-				
-				if (*c != '\r' && *c != '\n') {
-					syntax_error();
-					return false;
-				}
-				
-				auto line_end = c;
-				
-				{
-					auto last_slash = filepath.begin();
-					for (auto ch=filepath.begin(); ch!=filepath.end(); ++ch) if (*ch == '/') last_slash = ch +1;
-					
-					std::string inc_path (filepath.begin(), last_slash);
-					
-					std::string inc_filepath = prints("%s%s", inc_path.c_str(), filename_str.c_str());
-					
-					std::string inc_text;
-					if (!load_shader_source(inc_filepath, &inc_text IF_RZ_AUTO_FILE_RELOAD(,fcs) )) {
-						log_warning("load_shader_source:: &include: '%s' could not be loaded!", inc_filepath.c_str());
-						return false;
-					}
-					
-					auto line_begin_i = line_begin -src_text->begin();
-					
-					src_text->erase(line_begin, line_end);
-					src_text->insert(src_text->begin() +line_begin_i, inc_text.begin(), inc_text.end());
-					
-					c = src_text->begin() +line_begin_i +inc_text.length();
-				}
-				
-			}
-		} else {
-			++c;
-		}
-		
-	}
-	
-	return true;
-}
-
-static bool get_shader_compile_log (GLuint shad, std::string* log) {
-	GLsizei log_len;
-	{
-		GLint temp = 0;
-		glGetShaderiv(shad, GL_INFO_LOG_LENGTH, &temp);
-		log_len = (GLsizei)temp;
-	}
-	
-	if (log_len <= 1) {
-		return false; // no log available
-	} else {
-		// GL_INFO_LOG_LENGTH includes the null terminator, but it is not allowed to write the null terminator in std::string, so we have to allocate one additional char and then resize it away at the end
-		
-		log->resize(log_len);
-		
-		GLsizei written_len = 0;
-		glGetShaderInfoLog(shad, log_len, &written_len, &(*log)[0]);
-		dbg_assert(written_len == (log_len -1));
-		
-		log->resize(written_len);
-		
-		return true;
-	}
-}
-static bool get_program_link_log (GLuint prog, std::string* log) {
-	GLsizei log_len;
-	{
-		GLint temp = 0;
-		glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &temp);
-		log_len = (GLsizei)temp;
-	}
-	
-	if (log_len <= 1) {
-		return false; // no log available
-	} else {
-		// GL_INFO_LOG_LENGTH includes the null terminator, but it is not allowed to write the null terminator in std::string, so we have to allocate one additional char and then resize it away at the end
-		
-		log->resize(log_len);
-		
-		GLsizei written_len = 0;
-		glGetProgramInfoLog(prog, log_len, &written_len, &(*log)[0]);
-		dbg_assert(written_len == (log_len -1));
-		
-		log->resize(written_len);
-		
-		return true;
-	}
-}
-
-static bool load_shader (GLenum type, strcr filepath, GLuint* out IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
-	*out = 0;
-	
-	GLuint shad = glCreateShader(type);
-	
-	std::string src_text;
-	if (!load_shader_source(filepath, &src_text IF_RZ_AUTO_FILE_RELOAD(,fcs))) {
-		log_warning_asset_load(filepath.c_str());
-		return false;
-	}
-	
-	{
-		cstr ptr = src_text.c_str();
-		glShaderSource(shad, 1, &ptr, NULL);
-	}
-	
-	glCompileShader(shad);
-	
-	bool success;
-	{
-		GLint status;
-		glGetShaderiv(shad, GL_COMPILE_STATUS, &status);
-		
-		std::string log_str;
-		bool log_avail = get_shader_compile_log(shad, &log_str);
-		
-		success = status == GL_TRUE;
-		if (!success) {
-			// compilation failed
-			log_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filepath.c_str(), log_avail ? log_str.c_str() : "<no log available>");
-		} else {
-			// compilation success
-			if (log_avail) {
-				log_warning("OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filepath.c_str(), log_str.c_str());
-			}
-		}
-	}
-	
-	*out = shad;
-	return success;
-}
-static GLuint load_program (std::string vert_filepath, strcr frag_filepath, GLuint* out  IF_RZ_AUTO_FILE_RELOAD( , std::vector<File_Change_Poller>* fcs ) ) {
-	
-	GLuint prog = glCreateProgram();
-	
-	GLuint vert;
-	GLuint frag;
-	
-	*out = 0;
-	if (!load_shader(GL_VERTEX_SHADER, vert_filepath, &vert IF_RZ_AUTO_FILE_RELOAD(,fcs) )) return false;
-	if (!load_shader(GL_FRAGMENT_SHADER, frag_filepath, &frag IF_RZ_AUTO_FILE_RELOAD(,fcs) )) return false;
-	
-	glAttachShader(prog, vert);
-	glAttachShader(prog, frag);
-	
-	glLinkProgram(prog);
-	
-	bool success;
-	{
-		GLint status;
-		glGetProgramiv(prog, GL_LINK_STATUS, &status);
-		
-		std::string log_str;
-		bool log_avail = get_program_link_log(prog, &log_str);
-		
-		success = status == GL_TRUE;
-		if (!success) {
-			// linking failed
-			log_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath.c_str(), log_avail ? log_str.c_str() : "<no log available>");
-		} else {
-			// linking success
-			if (log_avail) {
-				log_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filepath.c_str(), frag_filepath.c_str(), log_str.c_str());
-			}
-		}
-	}
-	
-	glDetachShader(prog, vert);
-	glDetachShader(prog, frag);
-	
-	glDeleteShader(vert);
-	glDeleteShader(frag);
-	
-	*out = prog;
-	return success;
-}
-static void unload_program (GLuint prog) {
-	glDeleteProgram(prog);
-}
-
 namespace dds_n {
 	typedef u32 DWORD;
 	
@@ -499,17 +270,17 @@ static constexpr bool	TEX_SRGB = true;
 static f32				max_aniso;
 
 static bool load_texture2d (strcr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
-	std::string ext;
-	std::string type_ext;
+	str ext;
+	str type_ext;
 	{
 		ui i = 0;
-		std::string* exts[2] = { &ext, &type_ext };
+		str* exts[2] = { &ext, &type_ext };
 		
 		auto end = filepath.end();
 		
 		for (auto c = filepath.end(); c != filepath.begin();) { --c;
 			if (*c == '.') {
-				*exts[i] = std::string(c +1, end);
+				*exts[i] = str(c +1, end);
 				
 				end = c;
 				
@@ -638,58 +409,67 @@ struct Texture2D {
 		inplace_flip_vertical(m.data, m.dim.y, m.dim.x * get_tex_type_size(type));
 	}
 	
+	virtual bool load () { dbg_assert(false); return false; }
 	virtual bool reload_if_needed () { return false; }
 };
 
 struct File_Texture2D : public Texture2D {
-	cstr				filename;
-	bool				linear; // linear colorspace (for normal maps, etc.)
+	str				filename;
+	bool			linear; // linear colorspace (for normal maps, etc.)
 	
-	#if RZ_AUTO_FILE_RELOAD
-	File_Change_Poller	fc;
-	#endif
+	Tracked_File	srcf;
 	
-	void init_load (cstr fn, bool l) {
+	File_Texture2D (strcr fn, bool l) {
 		Texture2D::init();
 		
 		filename = fn;
 		linear = l;
 		
-		auto filepath = prints("%s/%s", textures_base_path, filename);
+		auto filepath = prints("%s/%s", textures_base_path, filename.c_str());
 		
-		#if RZ_AUTO_FILE_RELOAD
-		fc.init(filepath);
-		#endif
-		
-		if (!reload(filepath)) {
-			log_warning_asset_load(filepath.c_str());
-		}
+		srcf.init(filepath);
 	}
 	
-	bool reload (strcr filepath) {
+	virtual bool load () {
 		
 		data.free();
 		
-		if (!load_texture2d(filepath, linear, &type, &data, &dim, &mips)) return false;
+		f64 begin;
+		if (1) {
+			con_logf("Loading texture '%s'...", filename.c_str());
+			if (startup) draw_loadinscreen_frame();
+			
+			begin = glfwGetTime();
+		}
 		
-		upload();
+		if (!load_texture2d(srcf.filepath, linear, &type, &data, &dim, &mips)) {
+			con_logf_warning("\"%s\" could not be loaded!%s", filename.c_str());
+			return false;
+		}
+		
+		if (1) {
+			auto dt = glfwGetTime() -begin;
+			con_logf(">>> %f ms", dt * 1000);
+		}
 		
 		return true;
 	}
 	
 	virtual bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOAD
-		bool reloaded = fc.poll_did_change();
+		bool reloaded = srcf.poll_did_change();
 		if (!reloaded) return false;
 		
-		printf("texture source file changed, reloading \"%s\".\n", filename);
+		printf("texture source file changed, reloading \"%s\".\n", filename.c_str());
 		
-		auto filepath = prints("%s/%s", textures_base_path, filename);
-		
-		return reload(filepath);
-		#else
-		return false;
-		#endif
+		reloaded = load();
+		if (reloaded) {
+			upload();
+		}
+		return reloaded;
+	}
+	
+	~File_Texture2D () {
+		srcf.close();
 	}
 	
 };
@@ -747,14 +527,13 @@ struct Uniform {
 };
 
 struct Shader {
-	GLuint		prog;
+	str								vert_filename;
+	str								frag_filename;
 	
-	cstr		vert_filename;
-	cstr		frag_filename;
+	Source_Files					srcf;
 	
-	#if RZ_AUTO_FILE_RELOAD
-	std::vector<File_Change_Poller>	fcs;
-	#endif
+	str								vert_src;
+	str								frag_src;
 	
 	struct Uniform_Texture {
 		GLint			tex_unit;
@@ -763,88 +542,45 @@ struct Shader {
 		
 		Uniform_Texture (GLint unit, cstr n): tex_unit{unit}, name{n} {}
 	};
-
+	
+	GLuint							prog;
+	
 	std::vector<Uniform>			uniforms;
 	std::vector<Uniform_Texture>	textures;
 	
-	void init_load (cstr v, cstr f, std::initializer_list<Uniform> u, std::initializer_list<Uniform_Texture> t) {
-		vert_filename = v;
-		frag_filename = f;
+	Shader (strcr v, strcr f, std::vector<Uniform> const& u, std::vector<Uniform_Texture> const& t):
+			vert_filename{v}, frag_filename{f}, prog{0}, uniforms{u}, textures{t} {}
+	
+	bool load () {
+		bool v = _load_shader_source(vert_filename, &vert_src);
+		bool f = _load_shader_source(frag_filename, &frag_src);
+		if (!v || !f) return false;
 		
-		uniforms = u;
-		textures = t;
-		
-		_load(&prog IF_RZ_AUTO_FILE_RELOAD( , &fcs ) );
-	}
-	bool _load (GLuint* out IF_RZ_AUTO_FILE_RELOAD(, std::vector<File_Change_Poller>* fcs ) ) {
-		auto vert_filepath = prints("%s/%s", shaders_base_path, vert_filename);
-		auto frag_filepath = prints("%s/%s", shaders_base_path, frag_filename);
-		
-		bool res = load_program(vert_filepath, frag_filepath, out IF_RZ_AUTO_FILE_RELOAD(,fcs) );
+		bool res = _load_program();
 		if (res) {
-			get_uniform_locations(*out);
-			setup_uniform_textures(*out);
+			_get_uniform_locations();
+			_setup_uniform_textures();
 		}
 		return res;
 	}
+	bool reload_if_needed () {
+		if (srcf.poll_did_change()) {
+			
+			con_logf("shader source changed, reloading shader \"%s\";\"%s\".\n", vert_filename.c_str(),frag_filename.c_str());
+			
+			_unload_program();
+			
+			srcf.close_all();
+			srcf.v.clear();
+			
+			return load();
+		}
+		return false;
+	}
 	
+	//
 	bool valid () {
 		return prog != 0;
-	}
-	
-	void get_uniform_locations (GLuint prog) {
-		for (auto& u : uniforms) {
-			u.loc = glGetUniformLocation(prog, u.name);
-			//if (u.loc <= -1) log_warning("Uniform not valid %s!", u.name);
-		}
-	}
-	
-	void setup_uniform_textures (GLuint prog) {
-		glUseProgram(prog);
-		for (auto& t : textures) {
-			t.loc = glGetUniformLocation(prog, t.name);
-			//if (t.loc <= -1) log_warning("Uniform Texture not valid '%s'!", t.name);
-			glUniform1i(t.loc, t.tex_unit);
-		}
-	}
-	
-	bool reload_if_needed () {
-		#if RZ_AUTO_FILE_RELOAD
-		bool reloaded = false;
-		for (auto& f : fcs) {
-			if (f.poll_did_change()) {
-				reloaded = true;
-				break;
-			}
-		}
-		
-		if (reloaded) {
-			printf("shader source changed, reloading shader \"%s\"|\"%s\".\n", vert_filename, frag_filename);
-			
-			// keep old data if the reloading of the shader fails
-			GLuint tmp;
-			#if RZ_AUTO_FILE_RELOAD
-			std::vector<File_Change_Poller>	tmp_fcs;
-			#endif
-			
-			reloaded = _load(&tmp, IF_RZ_AUTO_FILE_RELOAD(&tmp_fcs) );
-			if (reloaded) {
-				
-				for (auto& f : fcs) f.close();
-				
-				fcs = tmp_fcs;
-				
-				unload_program(prog);
-				
-				prog = tmp;
-			} else {
-				for (auto& f : tmp_fcs) f.close();
-			}
-		}
-		return reloaded;
-		#else
-		return false;
-		#endif
 	}
 	
 	void bind () {
@@ -865,9 +601,252 @@ struct Shader {
 		auto* u = get_uniform(name);
 		if (u) u->set(v);
 		else {
-			log_warning("Uniform %s is not a uniform in the shader!", name);
+			dbg_warning("Uniform %s is not a uniform in the shader!", name);
 		}
 	}
+	
+	//
+	bool _load_shader_source (strcr filename, str* src_text) {
+		
+		{
+			str filepath = prints("%s%s", shaders_base_path, filename.c_str());
+			
+			srcf.v.emplace_back(); // add file to list dependent files even before we know if it exist, so that we can find out when it becomes existant
+			srcf.v.back().init(filepath);
+			
+			if (!read_text_file(filepath.c_str(), src_text)) {
+				con_logf_warning("load_shader_source:: $include \"%s\" could not be loaded!", filename.c_str());
+				return false;
+			}
+		}
+		
+		for (auto c=src_text->begin(); c!=src_text->end();) {
+			
+			if (*c == '$') {
+				auto line_begin = c;
+				++c;
+				
+				auto syntax_error = [&] () {
+					
+					while (*c != '\n' && *c != '\r') ++c;
+					str line (line_begin, c);
+					
+					con_logf_warning("load_shader_source:: expected '$include \"filename\"' syntax but got: '%s'!", line.c_str());
+				};
+				
+				while (*c == ' ' || *c == '\t') ++c;
+				
+				auto cmd = c;
+				
+				while ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || *c == '_') ++c;
+				
+				if (str(cmd, c).compare("include") == 0) {
+					
+					while (*c == ' ' || *c == '\t') ++c;
+					
+					if (*c != '"') {
+						syntax_error();
+						return false;
+					}
+					++c;
+					
+					auto filename_str_begin = c;
+					
+					while (*c != '"') ++c;
+					
+					str inc_filename(filename_str_begin, c);
+					
+					if (*c != '"') {
+						syntax_error();
+						return false;
+					}
+					++c;
+					
+					while (*c == ' ' || *c == '\t') ++c;
+					
+					if (*c != '\r' && *c != '\n') {
+						syntax_error();
+						return false;
+					}
+					
+					auto line_end = c;
+					
+					{
+						inc_filename = get_path_dir(filename).append(inc_filename);
+						
+						str inc_text;
+						if (!_load_shader_source(inc_filename, &inc_text)) return false;
+						
+						auto line_begin_i = line_begin -src_text->begin();
+						
+						src_text->erase(line_begin, line_end);
+						src_text->insert(src_text->begin() +line_begin_i, inc_text.begin(), inc_text.end());
+						
+						c = src_text->begin() +line_begin_i +inc_text.length();
+					}
+					
+				}
+			} else {
+				++c;
+			}
+			
+		}
+		
+		return true;
+	}
+	
+	static bool _get_shader_compile_log (GLuint shad, str* log) {
+		GLsizei log_len;
+		{
+			GLint temp = 0;
+			glGetShaderiv(shad, GL_INFO_LOG_LENGTH, &temp);
+			log_len = (GLsizei)temp;
+		}
+		
+		if (log_len <= 1) {
+			return false; // no log available
+		} else {
+			// GL_INFO_LOG_LENGTH includes the null terminator, but it is not allowed to write the null terminator in str, so we have to allocate one additional char and then resize it away at the end
+			
+			log->resize(log_len);
+			
+			GLsizei written_len = 0;
+			glGetShaderInfoLog(shad, log_len, &written_len, &(*log)[0]);
+			dbg_assert(written_len == (log_len -1));
+			
+			log->resize(written_len);
+			
+			return true;
+		}
+	}
+	static bool _get_program_link_log (GLuint prog, str* log) {
+		GLsizei log_len;
+		{
+			GLint temp = 0;
+			glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &temp);
+			log_len = (GLsizei)temp;
+		}
+		
+		if (log_len <= 1) {
+			return false; // no log available
+		} else {
+			// GL_INFO_LOG_LENGTH includes the null terminator, but it is not allowed to write the null terminator in str, so we have to allocate one additional char and then resize it away at the end
+			
+			log->resize(log_len);
+			
+			GLsizei written_len = 0;
+			glGetProgramInfoLog(prog, log_len, &written_len, &(*log)[0]);
+			dbg_assert(written_len == (log_len -1));
+			
+			log->resize(written_len);
+			
+			return true;
+		}
+	}
+	
+	static bool _load_shader (GLenum type, strcr filename, strcr source, GLuint* shad) {
+		*shad = glCreateShader(type);
+		
+		{
+			cstr ptr = source.c_str();
+			glShaderSource(*shad, 1, &ptr, NULL);
+		}
+		
+		glCompileShader(*shad);
+		
+		bool success;
+		{
+			GLint status;
+			glGetShaderiv(*shad, GL_COMPILE_STATUS, &status);
+			
+			str log_str;
+			bool log_avail = _get_shader_compile_log(*shad, &log_str);
+			
+			success = status == GL_TRUE;
+			if (!success) {
+				// compilation failed
+				con_logf_warning("OpenGL error in shader compilation \"%s\"!\n>>>\n%s\n<<<\n", filename.c_str(), log_avail ? log_str.c_str() : "<no log available>");
+			} else {
+				// compilation success
+				if (log_avail) {
+					con_logf_warning("OpenGL shader compilation log \"%s\":\n>>>\n%s\n<<<\n", filename.c_str(), log_str.c_str());
+				}
+			}
+		}
+		
+		return success;
+	}
+	bool _load_program () {
+		
+		prog = glCreateProgram();
+		
+		GLuint vert;
+		GLuint frag;
+		
+		if (	!_load_shader(GL_VERTEX_SHADER,		vert_filename, vert_src, &vert) ||
+				!_load_shader(GL_FRAGMENT_SHADER,	frag_filename, frag_src, &frag)) {
+			_unload_program();
+			prog = 0;
+			return false;
+		}
+		
+		glAttachShader(prog, vert);
+		glAttachShader(prog, frag);
+		
+		glLinkProgram(prog);
+		
+		bool success;
+		{
+			GLint status;
+			glGetProgramiv(prog, GL_LINK_STATUS, &status);
+			
+			str log_str;
+			bool log_avail = _get_program_link_log(prog, &log_str);
+			
+			success = status == GL_TRUE;
+			if (!success) {
+				// linking failed
+				con_logf_warning("OpenGL error in shader linkage \"%s\"|\"%s\"!\n>>>\n%s\n<<<\n", vert_filename.c_str(), frag_filename.c_str(), log_avail ? log_str.c_str() : "<no log available>");
+			} else {
+				// linking success
+				if (log_avail) {
+					con_logf_warning("OpenGL shader linkage log \"%s\"|\"%s\":\n>>>\n%s\n<<<\n", vert_filename.c_str(), frag_filename.c_str(), log_str.c_str());
+				}
+			}
+		}
+		
+		glDetachShader(prog, vert);
+		glDetachShader(prog, frag);
+		
+		glDeleteShader(vert);
+		glDeleteShader(frag);
+		
+		return success;
+	}
+	void _unload_program () {
+		glDeleteProgram(prog); // 0 for prog is valid (silently ignored)
+	}
+	
+	void _get_uniform_locations () {
+		for (auto& u : uniforms) {
+			u.loc = glGetUniformLocation(prog, u.name);
+			//if (u.loc <= -1) log_warning("Uniform not valid %s!", u.name);
+		}
+	}
+	void _setup_uniform_textures () {
+		glUseProgram(prog);
+		for (auto& t : textures) {
+			t.loc = glGetUniformLocation(prog, t.name);
+			//if (t.loc <= -1) log_warning("Uniform Texture not valid '%s'!", t.name);
+			glUniform1i(t.loc, t.tex_unit);
+		}
+	}
+	
+	~Shader () {
+		_unload_program();
+		srcf.close_all();
+	}
+	
 };
 
 struct Vertex_Layout {

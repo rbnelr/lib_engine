@@ -99,14 +99,14 @@ static f32 my_str_to_f32 (cstr str) {
 #endif
 
 namespace parse {
-	struct str {
+	struct String {
 		char*	ptr;
 		u32		len;
 		
 		operator bool () { return ptr; }
 	};
 	
-	static bool comp (str const& l, cstr r) {
+	static bool comp (String const& l, cstr r) {
 		char const* lcur = l.ptr;
 		char const* lend = lcur +l.len;
 		char const* rcur = r;
@@ -117,7 +117,7 @@ namespace parse {
 	}
 	
 	static bool whitespace_c (char c) {	return c == ' ' || c == '\t'; }
-	static str whitespace (char** pcur) {
+	static String whitespace (char** pcur) {
 		char* ret = *pcur;
 		if (!whitespace_c(*ret)) return {};
 		
@@ -127,7 +127,7 @@ namespace parse {
 	}
 	
 	static bool newline_c (char c) {	return c == '\n' || c == '\r'; }
-	static str newline (char** pcur) {
+	static String newline (char** pcur) {
 		char* ret = *pcur;
 		if (!newline_c(*ret)) return {};
 		
@@ -139,7 +139,7 @@ namespace parse {
 		return { ret, (u32)(*pcur -ret) };
 	}
 	
-	static str rest_of_line (char** pcur) {
+	static String rest_of_line (char** pcur) {
 		char* ret = *pcur;
 		if (newline_c(*ret) || *ret == '\0') return {};
 		
@@ -151,7 +151,7 @@ namespace parse {
 	}
 	
 	static bool identifier_c (char c) {	return (c >= 'A' && c <= 'Z')||(c >= 'a' && c <= 'z')|| c == '_'; }
-	static str identifier (char** pcur) {
+	static String identifier (char** pcur) {
 		char* ret = *pcur;
 		if (!identifier_c(*ret)) return {};
 		
@@ -161,7 +161,7 @@ namespace parse {
 	}
 	
 	static bool token_c (char c) {	return !whitespace_c(c) && !newline_c(c) && c != '\0'; }
-	static str token (char** pcur) {
+	static String token (char** pcur) {
 		char* ret = *pcur;
 		if (!token_c(*ret)) return {};
 		
@@ -173,7 +173,7 @@ namespace parse {
 	static bool sign_c (char c) {	return c == '-' || c == '+'; }
 	static bool digit_c (char c) {	return c >= '0' && c <= '9'; }
 	
-	static str int_ (char** pcur, u32* val) {
+	static String int_ (char** pcur, u32* val) {
 		char* ret = *pcur;
 		if (!sign_c(*ret) && !digit_c(*ret)) return {};
 		
@@ -184,7 +184,7 @@ namespace parse {
 		if (val) *val = (u32)atoi(ret);
 		return { ret, (u32)(*pcur -ret) };
 	}
-	static str float_ (char** pcur, f32* val) {
+	static String float_ (char** pcur, f32* val) {
 		char* ret = *pcur;
 		if (!sign_c(*ret) && !digit_c(*ret)) return {};
 		
@@ -252,7 +252,7 @@ namespace std {
 	template<> struct hash<Mesh_Vertex> {
 		size_t operator() (Mesh_Vertex const& v) const {
 			// tangents are not calculated at this point (we always calculate them ourself)
-			dbg_assert(all(v.tang_model == DEFAULT_TANG));
+			dbg_assert(all(v.tanmodel == DEFAULT_TANG));
 			return	hash<v3>()(v.pos_model) ^
 					hash<v3>()(v.norm_model) ^
 					hash<v2>()(v.uv) ^
@@ -268,7 +268,7 @@ bool Mesh_Vertex::operator== (Mesh_Vertex const& r) const {
 			all(col == r.col);
 }
 
-static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
+static bool load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 	
 	#if PROFILE_ATOF
 	_atof_dt = 0;
@@ -304,10 +304,10 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 	tris.reserve(4*1024);
 	
 	{ // load data from 
-		std::string file;
+		str file;
 		if (!read_text_file(filepath, &file)) {
-			log_warning_asset_load(filepath);
-			return;
+			con_logf_warning("\"%s\" could not be loaded!", filepath);
+			return false;
 		}
 		
 		char* cur = &file[0];
@@ -332,14 +332,14 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			if (!float_(&cur, &v.z)) goto error;
 			
 			if (!newline(&cur)) {
-				log_warning("load_mesh: \"%s\" Too many components in vec3 parsing, ignoring rest!");
+				con_logf_warning("load_mesh: \"%s\" Too many components in vec3 parsing, ignoring rest!");
 				ignore_line();
 			}
 			
 			return v;
 			
 			error: {
-				log_warning("load_mesh: \"%s\" Error in vec3 parsing, setting to NAN!");
+				con_logf_warning("load_mesh: \"%s\" Error in vec3 parsing, setting to NAN!");
 				return QNAN;
 			}
 		};
@@ -353,19 +353,19 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			if (!float_(&cur, &v.y)) goto error;
 			
 			if (!newline(&cur)) {
-				log_warning("load_mesh: \"%s\" Too many components in vec2 parsing, ignoring rest!");
+				con_logf_warning("load_mesh: \"%s\" Too many components in vec2 parsing, ignoring rest!");
 				ignore_line();
 			}
 			
 			return v;
 			
 			error: {
-				log_warning("load_mesh: \"%s\" Error in vec2 parsing, setting to NAN!");
+				con_logf_warning("load_mesh: \"%s\" Error in vec2 parsing, setting to NAN!");
 				return QNAN;
 			}
 		};
 		
-		str obj_name = {};
+		String obj_name = {};
 		
 		auto face = [&] () {
 			Vert_Indecies vert[4];
@@ -413,7 +413,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			return;
 			
 			error: {
-				log_warning("load_mesh: \"%s\" Error in face parsing, setting to 0!", filepath);
+				con_logf_warning("load_mesh: \"%s\" Error in face parsing, setting to 0!", filepath);
 				tris.push_back({});
 			}
 		};
@@ -424,7 +424,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			//printf(">>> tok: %5d %.*s\n", line_i, tok.len,tok.ptr);
 			
 			if (!tok) {
-				log_warning("load_mesh: \"%s\" Missing line token, ignoring line!", filepath);
+				con_logf_warning("load_mesh: \"%s\" Missing line token, ignoring line!", filepath);
 				rest_of_line(&cur); // skip line
 				
 			} else {
@@ -453,7 +453,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 					ignore_line();
 				}
 				else {
-					log_warning("load_mesh: \"%s\" Unknown line token \"%.*s\", ignoring line!", filepath, tok.len,tok.ptr);
+					con_logf_warning("load_mesh: \"%s\" Unknown line token \"%.*s\", ignoring line!", filepath, tok.len,tok.ptr);
 					ignore_line();
 				}
 			}
@@ -467,7 +467,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 	bool file_has_col =		false; // .obj does not have vertex color
 	
 	if (!file_has_norm) {
-		log_warning("mesh_loader:: Mesh '%s' has no normal data, we do not support generating the normals ourself!");
+		con_logf_warning("mesh_loader:: Mesh '%s' has no normal data, we do not support generating the normals ourself!");
 	}
 	
 	{ // expand triangles from individually indexed poss/uvs/norms to non-indexed
@@ -496,7 +496,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 				
 				u.v.pos_model =		tri_has_pos ?	transform * poss[t.arr[i].pos -1]	:	DEFAULT_POS;
 				u.v.norm_model =	tri_has_norm ?	normalize(norms[t.arr[i].norm -1])	:	DEFAULT_NORM;
-				u.v.tang_model =															DEFAULT_TANG;
+				u.v.tanmodel =															DEFAULT_TANG;
 				u.v.uv =			tri_has_uv ?	uvs[t.arr[i].uv -1]					:	DEFAULT_UV;
 				u.v.col =																	DEFAULT_COL;
 				
@@ -578,7 +578,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			v3 e1 = pos[2] -pos[0];
 			
 			if (all(e0 == 0) || all(e1 == 0)) {
-				//log_warning("mesh_loader:: Degenerate triangle [%llu] in mesh '%s'!", tri_i, filepath);
+				//con_logf_warning("mesh_loader:: Degenerate triangle [%llu] in mesh '%s'!", tri_i, filepath);
 				tri_tangents[tri_i].degenerate = true;
 			}
 			
@@ -590,7 +590,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			f32 f_denom = (du0 * dv1) -(du1 * dv0);
 			
 			if (f_denom == 0) {
-				//log_warning("mesh_loader:: Degenerate uv map triangle [%llu] in mesh '%s'!", tri_i, filepath);
+				//con_logf_warning("mesh_loader:: Degenerate uv map triangle [%llu] in mesh '%s'!", tri_i, filepath);
 				tri_tangents[tri_i].degenerate = true;
 			}
 			
@@ -606,7 +606,7 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			tri_tangents[tri_i].bitang = bitang;
 		}
 		
-		auto calc_bitang_sign = [&] (v3 tang, v3 bitang, v3 norm) -> f32 {
+		auto calc_bitansign = [&] (v3 tang, v3 bitang, v3 norm) -> f32 {
 			return dot(cross(norm, tang), bitang) < 0 ? -1.0f : +1.0f;
 		};
 		
@@ -638,27 +638,27 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			}
 			
 			if (count == 0) {
-				//log_warning("mesh_loader:: Vertex was part of only degenerate triangles [%llu] in mesh '%s'!", v_i, filepath);
-				vert[v_i].tang_model = DEFAULT_TANG;
+				//con_logf_warning("mesh_loader:: Vertex was part of only degenerate triangles [%llu] in mesh '%s'!", v_i, filepath);
+				vert[v_i].tanmodel = DEFAULT_TANG;
 				//vert[v_i].col *= v4(1,1,0,1);
 			} else {
 				// average tangent and bitangent
-				v3 avg_tang = total_tang / (f32)count;
-				v3 avg_bitang = total_bitang / (f32)count;
+				v3 avtang = total_tang / (f32)count;
+				v3 avbitang = total_bitang / (f32)count;
 				
-				if (length(avg_tang) < 0.05f || length(avg_bitang) < 0.05f) { // vectors could cancel out
-					//log_warning();
+				if (length(avtang) < 0.05f || length(avbitang) < 0.05f) { // vectors could cancel out
+					//con_logf_warning();
 					//vert[v_i].col *= v4(0,1,0,1);
 				}
 				
-				avg_tang = normalize(avg_tang);
-				avg_bitang = normalize(avg_bitang);
+				avtang = normalize(avtang);
+				avbitang = normalize(avbitang);
 				
 				v3 norm = vert[v_i].norm_model;
 				
-				f32 bitang_sign = calc_bitang_sign(avg_tang, avg_bitang, norm);
+				f32 bitansign = calc_bitansign(avtang, avbitang, norm);
 				
-				vert[v_i].tang_model = v4(avg_tang, bitang_sign);
+				vert[v_i].tanmodel = v4(avtang, bitansign);
 			}
 			
 		}
@@ -679,4 +679,6 @@ static void load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 	#if CHECK_MY_ATOF
 	printf(">>> CHECK_MY_ATOF =%u !=%u\n", atof_equal, atof_not_equal);
 	#endif
+	
+	return true;
 }

@@ -80,6 +80,9 @@ DONE:
  
  add a (bad) loading screen
  
+#2017.12.13 mi tag
+ tried to abstract asset reloading
+ 
 TODO
 -FEATURES:
  
@@ -90,6 +93,11 @@ TODO
  try variadic shadow mapping
  
  implement cascaded shadow maps
+ 
+ implement a asset handler
+ -handles file change polling
+ -can control where files are loaded from, including in a virutal filesystem
+ -handles caching of converted asset data (only load .obj/.tga/.jpg etc. from assets_src when the files are new or change, store the converted files as .dds/.bin etc. in asset_cache)
  
  make fullscreen toggle switch to fullscreen on the main monitor the window is on
  

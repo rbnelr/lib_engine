@@ -4,11 +4,11 @@
 #define RZ_COMP_MSVC			3
 // Determining the compiler
 #if !defined RZ_COMP
-	#if _MSC_VER && !__INTELRZ_COMPILER && !__clang__
+	#if _MSC_VER && !__INTELRZ_COMPILER && !__clan_
 		#define RZ_COMP RZ_COMP_MSVC
-	#elif __GNUC__ && !__clang__
+	#elif __GNUC__ && !__clan_
 		#define RZ_COMP RZ_COMP_GCC
-	#elif __clang__
+	#elif __clan_
 		#define RZ_COMP RZ_COMP_LLVM
 	#else
 		#warning Cannot determine compiler!.
@@ -77,6 +77,8 @@
 #define ANSI_COLOUR_CODE_NC		"\033[0m"
 
 #include <cstdarg>
+
+static void _prints (std::string* s, cstr format, va_list vl);
 
 #include "assert.hpp"
 
@@ -153,7 +155,8 @@ static FORCEINLINE At_Scope_Exit<FUNC> operator+(_Defer_Helper, FUNC f) {
 		return val = (TYPE)((UNDERLYING_TYPE)val +1); \
 	}
 
-typedef std::string const& strcr;
+typedef std::string		str;
+typedef str const& 		strcr;
 
 template<typename T, typename FUNC>
 static T* lsearch (std::vector<T>& arr, FUNC comp_with) {
@@ -184,9 +187,9 @@ static void _prints (std::string* s, cstr format, va_list vl) { // print
 	for (;;) {
 		auto ret = vsnprintf(&(*s)[0], s->length()+1, format, vl); // i think i'm technically not allowed to overwrite the null terminator
 		dbg_assert(ret >= 0);
-		bool was_big_enough = (u32)ret < s->length()+1;
+		bool was_bienough = (u32)ret < s->length()+1;
 		s->resize((u32)ret);
-		if (was_big_enough) break;
+		if (was_bienough) break;
 		// buffer was to small, buffer size was increased
 		// now snprintf has to succeed, so call it again
 	}
@@ -211,6 +214,17 @@ static std::string prints (cstr format, ...) {
 	va_end(vl);
 	
 	return ret;
+}
+
+// "foo/bar/README.txt" -> "foo/bar/"
+// "README.txt" -> ""
+// "" -> ""
+static std::string get_path_dir (std::string const& path) {
+	auto last_slash = path.begin();
+	for (auto ch=path.begin(); ch!=path.end(); ++ch) {
+		if (*ch == '/') last_slash = ch +1;
+	}
+	return std::string(path.begin(), last_slash);
 }
 
 static u64 get_file_size (FILE* f) {
