@@ -34,6 +34,9 @@ void DBG_COL (vec4 col) {
 void DBG_COL (vec3 col) {
 	DBG_COL(vec4(col, 1));
 }
+void DBG_COL (vec2 col) {
+	DBG_COL(vec4(col, 0, 1));
+}
 void FRAG_COL (vec4 col) {
 	if (dbg_out_written) col = dbg_out;
 	

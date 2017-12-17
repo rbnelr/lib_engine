@@ -83,10 +83,13 @@ DONE:
 #2017.12.13 mi tag
  tried to abstract asset reloading
  
+#2017.12.16-17 sa-so abend/nacht
+ implemented cubemap loading
+ -> one jpg per face for humus
+ -> equirectangular .hdr for sibl
+ 
 TODO
 -FEATURES:
- 
- implement cubemap loading (single face jpgs for humus, equirectangular .hdr for sibl)
  
  reimplement PBR shader
  

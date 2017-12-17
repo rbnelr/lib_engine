@@ -2,10 +2,10 @@
 
 $include "common.glsl"
 
-in		vec3	vs_pos_world_rot;
+in		vec3	vs_pos_world_dir;
 
 $include "skybox.glsl"
 
 void main () {
-	FRAG_COL( vec4( sky(normalize(vs_pos_world_rot)), 1 ) );
+	FRAG_COL( vec4( sky(normalize(vs_pos_world_dir)), 1 ) );
 }

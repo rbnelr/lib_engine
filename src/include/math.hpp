@@ -81,6 +81,10 @@ struct Sin_Cos {
 	f32 s, c;
 };
 
-Sin_Cos sin_cos (f32 ang) {
+static Sin_Cos sin_cos (f32 ang) {
 	return { sin(ang), cos(ang) };
+}
+
+static bool equal_epsilon (f32 l, f32 r, f32 epsilon) {
+	return abs(l -r) <= epsilon;
 }

@@ -38,9 +38,9 @@ namespace font {
 										v2(0,1) )};
 	
 	struct Font {
-		Texture2D			tex;
+		Texture2D		tex;
 		
-		u32					glyphs_count;
+		u32				glyphs_count;
 		std::vector<stbtt_packedchar>	glyphs_packed_chars;
 		
 		f32 border_left;
@@ -52,11 +52,10 @@ namespace font {
 		
 		std::vector<Glyph_Range>	ranges;
 		
-		bool init (s32 main_sz, std::initializer_list<Glyph_Range> r) {
+		Font (s32 main_sz, std::initializer_list<Glyph_Range> r) {
 			ranges = r;
 			
-			tex.init();
-			tex.alloc_single_mip(TEX_TYPE_LR8, tex_dim);
+			tex.alloc_cpu_single_mip(PT_LR8, tex_dim);
 			
 			cstr fonts_folder = "c:/windows/fonts/";
 			
@@ -133,8 +132,6 @@ namespace font {
 			tex.flip_vertical();
 			
 			tex.upload();
-			
-			return true;
 		}
 		
 		int search_glyph (utf32 c) {

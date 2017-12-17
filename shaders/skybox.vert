@@ -1,6 +1,6 @@
 #version 150 core // version 3.2
 
-out		vec3	vs_pos_world_rot;
+out		vec3	vs_pos_world_dir;
 
 uniform	mat4	world_to_clip;
 uniform	vec2	mcursor_pos;
@@ -56,5 +56,5 @@ void main () {
 	float r = mix(1, 0.2, mcursor_pos.x / screen_dim.x);
 	
 	gl_Position =		skybox_to_clip * vec4(arr[gl_VertexID], 1);
-	vs_pos_world_rot =	arr[gl_VertexID];
+	vs_pos_world_dir =	arr[gl_VertexID];
 }

@@ -31,7 +31,7 @@ void main () {
 	
 	gl_Position =		cam_to_clip * vec4(pos_cam, 1);
 	
-	vs_pos_cam =		pos_cam.xyz;
+	vs_pos_cam =		pos_cam;
 	vs_norm_cam =		norm_cam;
 	vs_tang_cam =		tang_cam;
 	vs_uv =				uv;

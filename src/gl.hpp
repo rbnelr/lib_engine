@@ -115,222 +115,162 @@ static void inplace_flip_vertical (void* data, u64 h, u64 stride) {
 	}
 }
 
-struct Mip {
-	byte*	data;
-	u64		size;
+static f32				max_aniso;
+
+enum pixel_type {
+	PT_SRGB8_LA8	=0, // srgb rgb and linear alpha
+	PT_LRGBA8		,
+	PT_SRGB8		,
+	PT_LRGB8		,
+	PT_LR8			,
 	
-	iv2		dim;
+	PT_LRGBA32F		,
+	PT_LRGB32F		,
+	
+	PT_DXT1			,
+	PT_DXT3			,
+	PT_DXT5			,
+};
+enum src_color_space {
+	CS_LINEAR		=0,
+	CS_SRGB			,
+	
+	CS_AUTO			,
 };
 
-enum tex_type {
-	TEX_TYPE_SRGB_A8	=0, // srgb rgb and linear alpha
-	TEX_TYPE_LRGBA8		,
-	TEX_TYPE_SRGB8		,
-	TEX_TYPE_LRGB8		,
-	TEX_TYPE_LR8		,
+struct Texture {
+	pixel_type			type;
+	GLuint				tex;
 	
-	TEX_TYPE_DXT1		,
-	TEX_TYPE_DXT3		,
-	TEX_TYPE_DXT5		,
-};
-static s32 get_tex_type_size (tex_type t) {
-	switch (t) {
-		case TEX_TYPE_SRGB_A8	:	return 4 * sizeof(u8);
-		case TEX_TYPE_LRGBA8	:	return 4 * sizeof(u8);
-		case TEX_TYPE_SRGB8		:	return 3 * sizeof(u8);
-		case TEX_TYPE_LRGB8		:	return 3 * sizeof(u8);
-		case TEX_TYPE_LR8		:	return 1 * sizeof(u8);
+	Data_Block			data;
+	
+	Texture () {
+		glGenTextures(1, &tex);
 		
-		case TEX_TYPE_DXT1		:	return 8 * sizeof(byte);
-		case TEX_TYPE_DXT3		:	return 16 * sizeof(byte);
-		case TEX_TYPE_DXT5		:	return 16 * sizeof(byte);
-		
-		default: dbg_assert(false); return 0;
+		data.data = nullptr;
 	}
+	virtual ~Texture () {
+		glDeleteTextures(1, &tex);
+		
+		data.free();
+	}
+	
+	u32 get_pixel_size () {
+		switch (type) {
+			case PT_SRGB8_LA8	:	return 4 * sizeof(u8);
+			case PT_LRGBA8		:	return 4 * sizeof(u8);
+			case PT_SRGB8		:	return 3 * sizeof(u8);
+			case PT_LRGB8		:	return 3 * sizeof(u8);
+			case PT_LR8			:	return 1 * sizeof(u8);
+			
+			case PT_DXT1		:	return 8 * sizeof(byte);
+			case PT_DXT3		:	return 16 * sizeof(byte);
+			case PT_DXT5		:	return 16 * sizeof(byte);
+			
+			default: dbg_assert(false); return 0;
+		}
+	}
+	
+	virtual bool load () = 0;
+	virtual bool reload_if_needed () = 0;
+	
+	virtual void upload () = 0;
+	
+	virtual void bind () = 0;
+};
+
+static constexpr GLint MAX_TEXTURE_UNIT = 8; // for debugging only, to unbind textures from unused texture units
+
+static void bind_texture_unit (GLint tex_unit, Texture* tex) {
+	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT, "increase MAX_TEXTURE_UNIT (%d, tex_unit: %d)", MAX_TEXTURE_UNIT, tex_unit);
+	
+	glActiveTexture(GL_TEXTURE0 +tex_unit);
+	tex->bind();
+}
+static void unbind_texture_unit (GLint tex_unit) { // just for debugging
+	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT);
+	
+	glActiveTexture(GL_TEXTURE0 +tex_unit);
+	
+	glBindTexture(GL_TEXTURE_2D, 0); // TODO: We dont care if we bound a cubemap to this tex unit?
 }
 
-static bool load_dds (cstr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
-	using namespace dds_n;
+struct Texture2D : public Texture {
+	iv2					dim;
 	
-	if (!read_entire_file(filepath, file_data)) return false; // fail
-	byte* cur = file_data->data;
-	byte* end = file_data->data +file_data->size;
+	struct Mip {
+		byte*	data;
+		u64		size;
+		
+		iv2		dim;
+		u64		stride;
+	};
 	
-	if (	(u64)(end -cur) < 4 ||
-			memcmp(cur, "DDS ", 4) != 0 ) return false; // fail
-	cur += 4;
+	std::vector<Mip>	mips;
 	
-	if (	(u64)(end -cur) < sizeof(DDS_HEADER) ) return false; // fail
-	
-	auto* header = (DDS_HEADER*)cur;
-	cur += sizeof(DDS_HEADER);
-	
-	dbg_assert(header->dwSize == sizeof(DDS_HEADER));
-	dbg_assert((header->dwFlags & (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT)) == (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT), "0x%x", header->dwFlags);
-	dbg_assert(header->ddspf.dwSize == sizeof(DDS_PIXELFORMAT));
-	
-	if (!(header->dwFlags & DDSD_MIPMAPCOUNT) || !(header->dwCaps & DDSCAPS_MIPMAP)) {
-		header->dwMipMapCount = 1;
-	} else {
-		dbg_assert(header->dwFlags & DDSD_MIPMAPCOUNT);
+	Texture2D (): Texture{} {
+		glBindTexture(GL_TEXTURE_2D, tex);
 	}
 	
-	*dim = iv2((s32)header->dwWidth, (s32)header->dwHeight);
+	void alloc_cpu_single_mip (pixel_type pt, iv2 d) {
+		type = pt;
+		dim = d;
+		
+		u64 stride = (u64)dim.x * get_pixel_size();
+		
+		data.free();
+		data = Data_Block::alloc((u64)dim.y * stride);
+		
+		mips.resize(1);
+		mips[0] = { data.data, data.size, dim, stride };
+	}
 	
-	mips->resize(header->dwMipMapCount);
-	
-	if (header->ddspf.dwFlags & DDPF_FOURCC) {
-		if (		memcmp(&header->ddspf.dwFourCC, "DXT1", 4) == 0 )	*type = TEX_TYPE_DXT1;
-		else if (	memcmp(&header->ddspf.dwFourCC, "DXT3", 4) == 0 )	*type = TEX_TYPE_DXT3;
-		else if (	memcmp(&header->ddspf.dwFourCC, "DXT5", 4) == 0 )	*type = TEX_TYPE_DXT5;
-		else															return false; // fail
+	void upload () {
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		
-		u64 block_size = *type == TEX_TYPE_DXT1 ? 8 : 16;
+		glBindTexture(GL_TEXTURE_2D, tex);
 		
-		s32 w=dim->x, h=dim->y;
-		
-		for (u32 i=0; i<header->dwMipMapCount; ++i) {
-			u32 blocks_w = max( (u32)1, ((u32)w +3)/4 );
-			u32 blocks_h = max( (u32)1, ((u32)h +3)/4 );
+		switch (type) {
+			case PT_SRGB8_LA8	:	upload_uncompressed(GL_SRGB8_ALPHA8,	GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_LRGBA8		:	upload_uncompressed(GL_RGBA8,			GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_SRGB8		:	upload_uncompressed(GL_SRGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LRGB8		:	upload_uncompressed(GL_RGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LR8			:	upload_uncompressed(GL_R8,				GL_RED,		GL_UNSIGNED_BYTE);	break;
 			
-			u64 size =	blocks_w * blocks_h * block_size;
-			if ((u64)(end -cur) < size) return false; // fail
+			case PT_LRGBA32F	:	upload_uncompressed(GL_RGBA32F,			GL_RGBA,	GL_FLOAT);	break;
+			case PT_LRGB32F		:	upload_uncompressed(GL_RGB32F,			GL_RGB,		GL_FLOAT);	break;
 			
-			inplace_flip_DXT64_vertical(cur, blocks_w, blocks_h);
-			
-			(*mips)[i] = {cur, size, iv2(w,h)};
-			
-			if (w > 1) w /= 2;
-			if (h > 1) h /= 2;
-			
-			cur += size;
-		}
-		
-	} else {
-		
-		dbg_assert(header->ddspf.dwFlags & DDPF_RGB);
-		
-		switch (header->ddspf.dwRGBBitCount) {
-			case 32: {
-				dbg_assert(header->ddspf.dwFlags & DDPF_ALPHAPIXELS);
-				
-				*type = linear ? TEX_TYPE_LRGBA8 :	TEX_TYPE_SRGB_A8;
-			} break;
-			case 24: {
-				*type = linear ? TEX_TYPE_LRGB8 :	TEX_TYPE_SRGB8;
-			} break;
+			case PT_DXT1		:	upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);		break;
+			case PT_DXT3		:	upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
+			case PT_DXT5		:	upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
 			
 			default: dbg_assert(false);
 		}
-		
-		dbg_assert(header->dwFlags & DDSD_PITCH);
-		
-		s32 w=dim->x, h=dim->y;
-		
-		for (u32 i=0; i<header->dwMipMapCount; ++i) {
-			
-			u64 size =	h * header->dwPitchOrLinearSize;
-			if ((u64)(end -cur) < size) return false; // fail
-			
-			inplace_flip_vertical(cur, h, header->dwPitchOrLinearSize);
-			
-			(*mips)[i] = {cur, size, iv2(w,h)};
-			
-			if (w > 1) w /= 2;
-			if (h > 1) h /= 2;
-			
-			cur += size;
-		}
-	}
-	return true;
-}
-static bool load_img_stb (cstr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
-	stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
-	
-	int n;
-	file_data->data = stbi_load(filepath, &dim->x, &dim->y, &n, 0);
-	
-	switch (n) {
-		case 4:	*type = linear ? TEX_TYPE_LRGBA8 :	TEX_TYPE_SRGB_A8;	break;
-		case 3:	*type = linear ? TEX_TYPE_LRGB8 :	TEX_TYPE_SRGB8;		break;
-		default: dbg_assert(false);
-	}
-	
-	file_data->size = dim->x * dim->y * n;
-	
-	mips->resize(1);
-	(*mips)[0] = { file_data->data, file_data->size, *dim };
-	
-	return file_data->data != nullptr;
-}
-
-static constexpr bool	TEX_LINEAR = true;
-static constexpr bool	TEX_SRGB = true;
-
-static f32				max_aniso;
-
-static bool load_texture2d (strcr filepath, bool linear, tex_type* type, Data_Block* file_data, iv2* dim, std::vector<Mip>* mips) {
-	str ext;
-	str type_ext;
-	{
-		ui i = 0;
-		str* exts[2] = { &ext, &type_ext };
-		
-		auto end = filepath.end();
-		
-		for (auto c = filepath.end(); c != filepath.begin();) { --c;
-			if (*c == '.') {
-				*exts[i] = str(c +1, end);
-				
-				end = c;
-				
-				++i;
-				if (i == 2) break;
-			}
-		}
-	}
-	
-	//printf(">>> '%s' -> '%s' '%s'\n", filepath.c_str(), type_ext.c_str(), ext.c_str());
-	
-	if (ext.compare("dds") == 0)	return load_dds(filepath.c_str(), linear, type, file_data, dim, mips);
-	else							return load_img_stb(filepath.c_str(), linear, type, file_data, dim, mips);
-}
-
-
-struct Texture2D {
-	tex_type			type;
-	GLuint				tex;
-	iv2					dim;
-	std::vector<Mip>	mips;
-	Data_Block			data;
-	
-	void init () {
-		glGenTextures(1, &tex);
-		glBindTexture(GL_TEXTURE_2D, tex);
 		
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,		GL_LINEAR_MIPMAP_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,		GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,			GL_REPEAT);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,			GL_REPEAT);
 		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,	max_aniso);
-		
-		data.data = nullptr;
 	}
 	
-	void alloc_single_mip (tex_type t, iv2 d) {
-		type = t;
-		dim = d;
-		
-		data.free();
-		data = Data_Block::alloc((u64)dim.y * (u64)dim.x * (u64)get_tex_type_size(type));
-		
-		mips.resize(1);
-		mips[0] = { data.data, data.size, dim };
+	virtual void bind () {
+		glBindTexture(GL_TEXTURE_2D, tex);
 	}
 	
-	void _upload_compressed (GLenum internalFormat) {
-		//GL_TEXTURE_2D == tex; needs tex to be bound
+	void flip_vertical () {
+		dbg_assert(type == PT_LR8);
+		dbg_assert(mips.size() == 1);
 		
+		auto& m = mips[0];
+		inplace_flip_vertical(m.data, m.dim.y, m.dim.x * get_pixel_size());
+	}
+	
+	virtual bool load () { dbg_assert(false); return false; }
+	virtual bool reload_if_needed () { return false; }
+	
+private:
+	void upload_compressed (GLenum internalFormat) {
 		dbg_assert((u32)mips.size() >= 1);
 		
 		s32 w=dim.x, h=dim.y;
@@ -343,20 +283,18 @@ struct Texture2D {
 			
 			if (++mip_i == (u32)mips.size()) break;
 			
-			if (w > 0) w /= 2;
-			if (h > 0) h /= 2;
 			if (w == 1 && h == 1) break;
+			if (w > 1) w /= 2;
+			if (h > 1) h /= 2;
 		}
 		
 		if (mip_i != (u32)mips.size() || w != 1 || h != 1) {
-			dbg_assert(false);
+			dbg_assert(false, "Not tested");
 			
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 	}
-	void _upload_uncompressed (GLenum internalFormat, GLenum format, GLenum type) {
-		//GL_TEXTURE_2D == tex; needs tex to be bound
-		
+	void upload_uncompressed (GLenum internalFormat, GLenum format, GLenum type) {
 		dbg_assert((u32)mips.size() >= 1);
 		
 		s32 w=dim.x, h=dim.y;
@@ -369,9 +307,9 @@ struct Texture2D {
 			
 			if (++mip_i == (u32)mips.size()) break;
 			
-			if (w > 0) w /= 2;
-			if (h > 0) h /= 2;
 			if (w == 1 && h == 1) break;
+			if (w > 1) w /= 2;
+			if (h > 1) h /= 2;
 		}
 		
 		if (mip_i != (u32)mips.size() || w != 1 || h != 1) {
@@ -380,54 +318,147 @@ struct Texture2D {
 			glGenerateMipmap(GL_TEXTURE_2D);
 		}
 	}
-	void upload () {
+	
+};
+
+struct TextureCube : public Texture {
+	iv2					dim;
+	
+	struct Mip {
+		byte*	data;
+		u64		size;
 		
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		iv2		dim;
+		u64		stride;
+		u64		face_size;
+	};
+	
+	std::vector<Mip>	mips;
+	
+	TextureCube (): Texture{} {
+		glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+	}
+	
+	void alloc_gpu_single_mip (pixel_type pt, iv2 d) {
+		type = pt;
+		dim = d;
 		
-		glBindTexture(GL_TEXTURE_2D, tex);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
 		
 		switch (type) {
-			case TEX_TYPE_SRGB_A8:	_upload_uncompressed(GL_SRGB8_ALPHA8,	GL_RGBA,	GL_UNSIGNED_BYTE);	break;
-			case TEX_TYPE_LRGBA8:	_upload_uncompressed(GL_RGBA8,			GL_RGBA,	GL_UNSIGNED_BYTE);	break;
-			case TEX_TYPE_SRGB8	:	_upload_uncompressed(GL_SRGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
-			case TEX_TYPE_LRGB8	:	_upload_uncompressed(GL_RGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
-			case TEX_TYPE_LR8	:	_upload_uncompressed(GL_R8,				GL_RED,		GL_UNSIGNED_BYTE);	break;
-				
-			case TEX_TYPE_DXT1:	_upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);	break;
-			case TEX_TYPE_DXT3:	_upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
-			case TEX_TYPE_DXT5:	_upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
+			case PT_SRGB8_LA8	:	alloc_uncompressed(GL_SRGB8_ALPHA8,	GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_LRGBA8		:	alloc_uncompressed(GL_RGBA8,		GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_SRGB8		:	alloc_uncompressed(GL_SRGB8,		GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LRGB8		:	alloc_uncompressed(GL_RGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LR8			:	alloc_uncompressed(GL_R8,			GL_RED,		GL_UNSIGNED_BYTE);	break;
+			
+			case PT_LRGBA32F	:	alloc_uncompressed(GL_RGBA32F,		GL_RGBA,	GL_FLOAT);	break;
+			case PT_LRGB32F		:	alloc_uncompressed(GL_RGB32F,		GL_RGB,		GL_FLOAT);	break;
+			
+			case PT_DXT1		:	alloc_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);	break;
+			case PT_DXT3		:	alloc_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
+			case PT_DXT5		:	alloc_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
 			
 			default: dbg_assert(false);
 		}
 	}
 	
-	void flip_vertical () {
-		dbg_assert(type == TEX_TYPE_LR8);
-		dbg_assert(mips.size() == 1);
+	virtual void upload () {
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		
-		auto& m = mips[0];
-		inplace_flip_vertical(m.data, m.dim.y, m.dim.x * get_tex_type_size(type));
+		glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+		
+		switch (type) {
+			case PT_SRGB8_LA8	:	upload_uncompressed(GL_SRGB8_ALPHA8,	GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_LRGBA8		:	upload_uncompressed(GL_RGBA8,			GL_RGBA,	GL_UNSIGNED_BYTE);	break;
+			case PT_SRGB8		:	upload_uncompressed(GL_SRGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LRGB8		:	upload_uncompressed(GL_RGB8,			GL_RGB,		GL_UNSIGNED_BYTE);	break;
+			case PT_LR8			:	upload_uncompressed(GL_R8,				GL_RED,		GL_UNSIGNED_BYTE);	break;
+			
+			case PT_DXT1		:	upload_compressed(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);		break;
+			case PT_DXT3		:	upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);	break;
+			case PT_DXT5		:	upload_compressed(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);	break;
+			
+			default: dbg_assert(false);
+		}
+		
+		glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+		
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER,		GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER,		GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S,			GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T,			GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R,			GL_CLAMP_TO_EDGE);
+		glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY,	max_aniso);
+	}
+	
+	virtual void bind () {
+		glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
 	}
 	
 	virtual bool load () { dbg_assert(false); return false; }
 	virtual bool reload_if_needed () { return false; }
+	
+private:
+	void upload_compressed (GLenum internalFormat) {
+		dbg_assert(false, "not implemented");
+	}
+	void upload_uncompressed (GLenum internalFormat, GLenum format, GLenum type) {
+		dbg_assert((u32)mips.size() >= 1);
+		
+		s32 w=dim.x, h=dim.y;
+		
+		u32 mip_i;
+		for (mip_i=0; mip_i<(u32)mips.size();) {
+			auto& m = mips[mip_i];
+			
+			byte* data_cur = m.data;
+			
+			for (ui face_i=0; face_i<6; ++face_i) {
+				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X +face_i, mip_i, internalFormat, m.dim.x,m.dim.y, 0, format, type, data_cur);
+				
+				data_cur += m.face_size;
+			}
+			
+			if (++mip_i == (u32)mips.size()) break;
+			
+			if (w == 1 && h == 1) break;
+			if (w > 1) w /= 2;
+			if (h > 1) h /= 2;
+		}
+		
+		if (mip_i != (u32)mips.size() || w != 1 || h != 1) {
+			dbg_assert(mip_i == 1, "%u %u %u %u", mip_i, (u32)mips.size(), w, h);
+			
+			glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+		}
+	}
+	
+	void alloc_compressed (GLenum internalFormat) {
+		dbg_assert(false, "not implemented");
+	}
+	void alloc_uncompressed (GLenum internalFormat, GLenum format, GLenum type) {
+		for (ui face_i=0; face_i<6; ++face_i) {
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X +face_i, 0, internalFormat, dim.x,dim.y, 0, format, type, NULL);
+		}
+	}
+	
 };
 
 struct File_Texture2D : public Texture2D {
 	str				filename;
-	bool			linear; // linear colorspace (for normal maps, etc.)
 	
-	Tracked_File	srcf;
+	Source_File		srcf;
+	src_color_space	cs;
 	
-	File_Texture2D (strcr fn, bool l) {
-		Texture2D::init();
-		
-		filename = fn;
-		linear = l;
-		
+	File_Texture2D (src_color_space cs_, strcr fn): Texture2D{}, filename{fn}, cs{cs_} {
 		auto filepath = prints("%s/%s", textures_base_path, filename.c_str());
 		
 		srcf.init(filepath);
+	}
+	
+	virtual ~File_Texture2D () {
+		srcf.close();
 	}
 	
 	virtual bool load () {
@@ -436,14 +467,14 @@ struct File_Texture2D : public Texture2D {
 		
 		f64 begin;
 		if (1) {
-			con_logf("Loading texture '%s'...", filename.c_str());
+			con_logf("Loading File_Texture2D '%s'...", filename.c_str());
 			if (startup) draw_loadinscreen_frame();
 			
 			begin = glfwGetTime();
 		}
 		
-		if (!load_texture2d(srcf.filepath, linear, &type, &data, &dim, &mips)) {
-			con_logf_warning("\"%s\" could not be loaded!%s", filename.c_str());
+		if (!load_texture()) {
+			con_logf_warning("\"%s\" could not be loaded!", filename.c_str());
 			return false;
 		}
 		
@@ -459,7 +490,7 @@ struct File_Texture2D : public Texture2D {
 		bool reloaded = srcf.poll_did_change();
 		if (!reloaded) return false;
 		
-		printf("texture source file changed, reloading \"%s\".\n", filename.c_str());
+		printf("File_Texture2D source file changed, reloading \"%s\".\n", filename.c_str());
 		
 		reloaded = load();
 		if (reloaded) {
@@ -468,10 +499,431 @@ struct File_Texture2D : public Texture2D {
 		return reloaded;
 	}
 	
-	~File_Texture2D () {
-		srcf.close();
+private:
+	bool load_texture () {
+		str ext;
+		get_fileext(srcf.filepath, &ext);
+		
+		if (		ext.compare("dds") == 0 ) {
+			return load_dds(srcf.filepath, cs, &type, &dim, &mips, &data);
+		} else if (	ext.compare("hdr") == 0 ) {
+			return load_img_stb_f32(srcf.filepath, cs, &type, &dim, &mips, &data);
+		} else {
+			return load_img_stb(srcf.filepath, cs, &type, &dim, &mips, &data);
+		}
 	}
 	
+	static bool load_dds (strcr filepath, src_color_space cs, pixel_type* type, iv2* dim, std::vector<Mip>* mips, Data_Block* data) {
+		using namespace dds_n;
+		
+		if (!read_entire_file(filepath.c_str(), data)) return false; // fail
+		byte* cur = data->data;
+		byte* end = data->data +data->size;
+		
+		if (	(u64)(end -cur) < 4 ||
+				memcmp(cur, "DDS ", 4) != 0 ) return false; // fail
+		cur += 4;
+		
+		if (	(u64)(end -cur) < sizeof(DDS_HEADER) ) return false; // fail
+		
+		auto* header = (DDS_HEADER*)cur;
+		cur += sizeof(DDS_HEADER);
+		
+		dbg_assert(header->dwSize == sizeof(DDS_HEADER));
+		dbg_assert((header->dwFlags & (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT)) == (DDSD_CAPS|DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT), "0x%x", header->dwFlags);
+		dbg_assert(header->ddspf.dwSize == sizeof(DDS_PIXELFORMAT));
+		
+		if (!(header->dwFlags & DDSD_MIPMAPCOUNT) || !(header->dwCaps & DDSCAPS_MIPMAP)) {
+			header->dwMipMapCount = 1;
+		} else {
+			dbg_assert(header->dwFlags & DDSD_MIPMAPCOUNT);
+		}
+		
+		*dim = iv2((s32)header->dwWidth, (s32)header->dwHeight);
+		
+		mips->resize(header->dwMipMapCount);
+		
+		if (header->ddspf.dwFlags & DDPF_FOURCC) {
+			if (		memcmp(&header->ddspf.dwFourCC, "DXT1", 4) == 0 )	*type = PT_DXT1;
+			else if (	memcmp(&header->ddspf.dwFourCC, "DXT3", 4) == 0 )	*type = PT_DXT3;
+			else if (	memcmp(&header->ddspf.dwFourCC, "DXT5", 4) == 0 )	*type = PT_DXT5;
+			else															return false; // fail
+			
+			switch (cs) {
+				case CS_LINEAR: case CS_AUTO:
+					break;
+				case CS_SRGB: con_logf_warning("trying to force contents of compressed .dds to srgb colorspace, not supported, ignoring!");
+					break;
+				default: dbg_assert(false);
+			}
+			
+			u64 block_size = *type == PT_DXT1 ? 8 : 16;
+			
+			s32 w=dim->x, h=dim->y;
+			
+			for (u32 i=0; i<header->dwMipMapCount; ++i) {
+				u32 blocks_w = max( (u32)1, ((u32)w +3)/4 );
+				u32 blocks_h = max( (u32)1, ((u32)h +3)/4 );
+				
+				u64 size =	blocks_w * blocks_h * block_size;
+				if ((u64)(end -cur) < size) return false; // fail
+				
+				inplace_flip_DXT64_vertical(cur, blocks_w, blocks_h);
+				
+				(*mips)[i] = {cur, size, iv2(w,h)};
+				
+				if (w > 1) w /= 2;
+				if (h > 1) h /= 2;
+				
+				cur += size;
+			}
+			
+		} else {
+			dbg_assert(header->ddspf.dwFlags & DDPF_RGB);
+			
+			switch (header->ddspf.dwRGBBitCount) {
+				case 32: {
+					dbg_assert(header->ddspf.dwFlags & DDPF_ALPHAPIXELS);
+					
+					switch (cs) {
+						case CS_LINEAR: case CS_AUTO:	*type = PT_LRGBA8;		break;
+						case CS_SRGB:					*type = PT_SRGB8_LA8;	break;
+						default: dbg_assert(false);
+					}
+				} break;
+				case 24: {
+					switch (cs) {
+						case CS_LINEAR: case CS_AUTO:	*type = PT_LRGB8;		break;
+						case CS_SRGB:					*type = PT_SRGB8;		break;
+						default: dbg_assert(false);
+					}
+				} break;
+				
+				default: dbg_assert(false);
+			}
+			
+			dbg_assert(header->dwFlags & DDSD_PITCH);
+			
+			s32 w=dim->x, h=dim->y;
+			
+			for (u32 i=0; i<header->dwMipMapCount; ++i) {
+				
+				u64 size =	h * header->dwPitchOrLinearSize;
+				if ((u64)(end -cur) < size) return false; // fail
+				
+				inplace_flip_vertical(cur, h, header->dwPitchOrLinearSize);
+				
+				(*mips)[i] = {cur, size, iv2(w,h)};
+				
+				if (w > 1) w /= 2;
+				if (h > 1) h /= 2;
+				
+				cur += size;
+			}
+		}
+		return true;
+	}
+	static bool load_img_stb (strcr filepath, src_color_space cs, pixel_type* type, iv2* dim, std::vector<Mip>* mips, Data_Block* data) {
+		stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
+		
+		int n;
+		data->data = stbi_load(filepath.c_str(), &dim->x, &dim->y, &n, 0);
+		if (!data->data) return false;
+		
+		switch (n) {
+			case 4: {
+				switch (cs) {
+					case CS_LINEAR:				*type = PT_LRGBA8;		break;
+					case CS_SRGB: case CS_AUTO:	*type = PT_SRGB8_LA8;	break;
+					default: dbg_assert(false);
+				}
+			} break;
+			case 3: {
+				switch (cs) {
+					case CS_LINEAR:				*type = PT_LRGB8;		break;
+					case CS_SRGB: case CS_AUTO:	*type = PT_SRGB8;		break;
+					default: dbg_assert(false);
+				}
+			} break;
+			default: dbg_assert(false);
+		}
+		
+		u64 stride = dim->x * n;
+		data->size = dim->y * stride;
+		
+		mips->resize(1);
+		(*mips)[0] = { data->data, data->size, *dim, stride };
+		
+		return true;
+	}
+	static bool load_img_stb_f32 (strcr filepath, src_color_space cs, pixel_type* type, iv2* dim, std::vector<Mip>* mips, Data_Block* data) {
+		stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
+		
+		int n;
+		data->data = (byte*)stbi_loadf(filepath.c_str(), &dim->x, &dim->y, &n, 0);
+		if (!data->data) return false;
+		
+		switch (n) {
+			case 4: {
+				switch (cs) {
+					case CS_LINEAR: case CS_AUTO:	*type = PT_LRGBA32F;	break;
+					default: dbg_assert(false);
+				}
+			} break;
+			case 3: {
+				switch (cs) {
+					case CS_LINEAR: case CS_AUTO:	*type = PT_LRGB32F;		break;
+					default: dbg_assert(false);
+				}
+			} break;
+			default: dbg_assert(false);
+		}
+		
+		u64 stride = dim->x * n * sizeof(f32);
+		data->size = dim->y * stride;
+		
+		mips->resize(1);
+		(*mips)[0] = { data->data, data->size, *dim, stride };
+		
+		return true;
+	}
+	
+};
+
+struct File_TextureCube : public TextureCube {
+	str				filename;
+	
+	Source_File		srcf;
+	src_color_space	cs;
+	
+	iv2				equirect_max_res;
+	File_Texture2D*	equirect;
+	
+	File_TextureCube (src_color_space cs_, strcr fn, iv2 equirect_max_res_=4096): TextureCube{}, filename{fn}, cs{cs_}, equirect_max_res{equirect_max_res_}, equirect{nullptr} {
+		auto filepath = prints("%s/%s", textures_base_path, filename.c_str());
+		
+		srcf.init(filepath);
+	}
+	
+	virtual ~File_TextureCube () {
+		srcf.close();
+		
+		delete equirect;
+	}
+	
+	virtual bool load () {
+		
+		data.free();
+		
+		f64 begin;
+		if (1) {
+			con_logf("Loading File_TextureCube '%s'...", filename.c_str());
+			if (startup) draw_loadinscreen_frame();
+			
+			begin = glfwGetTime();
+		}
+		
+		if (!load_texture()) {
+			con_logf_warning("\"%s\" could not be loaded!", filename.c_str());
+			return false;
+		}
+		
+		if (1) {
+			auto dt = glfwGetTime() -begin;
+			con_logf(">>> %f ms", dt * 1000);
+		}
+		
+		return true;
+	}
+	
+	virtual bool reload_if_needed () {
+		bool reloaded = srcf.poll_did_change();
+		if (!reloaded) return false;
+		
+		printf("File_TextureCube source file changed, reloading \"%s\".\n", filename.c_str());
+		
+		delete equirect;
+		equirect = nullptr;
+		
+		reloaded = load();
+		if (reloaded) {
+			upload();
+		}
+		return reloaded;
+	}
+	
+	virtual void upload () {
+		if (!equirect) {
+			TextureCube::upload();
+		} else {
+			type = equirect->type;
+			dim = (s32)round_up_to_pot((u32)max(equirect->dim.x, equirect->dim.y) / 4);
+			
+			equirect->upload();
+			
+			alloc_gpu_single_mip(type, dim);
+			
+			gpu_convert_equirectangular_to_cubemap();
+			
+			glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+			
+			glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+		}
+	}
+	
+private:
+	bool load_texture () {
+		str ext;
+		get_fileext(srcf.filepath, &ext);
+		
+		if (ext.compare("dds") == 0) {
+			dbg_assert(false, "not implemented");
+			return false;
+		} else {
+			// we are loading a cubemap from a equirectangular 2d image
+			
+			delete equirect;
+			equirect = new File_Texture2D(cs, filename);
+			
+			return equirect->load();
+		}
+	}
+	
+	void gpu_convert_equirectangular_to_cubemap ();
+	
+};
+
+struct Multi_File_TextureCube : public TextureCube { // Cubemap with one image file per face
+	str				filename;
+	
+	Source_Files	srcf;
+	src_color_space	cs;
+	
+	Multi_File_TextureCube (src_color_space cs_, strcr common_filename, std::array<str, 6>const& filenames): TextureCube{}, filename{common_filename}, cs{cs_} {
+		for (ui i=0; i<6; ++i) {
+			str filepath = prints("%s/%s", textures_base_path, filenames[i].c_str());
+			
+			srcf.v.emplace_back();
+			srcf.v.back().init(filepath);
+		}
+	}
+	
+	virtual ~Multi_File_TextureCube () {
+		srcf.close_all();
+	}
+	
+	virtual bool load () {
+		
+		data.free();
+		
+		f64 begin;
+		if (1) {
+			con_logf("Loading Multi_File_TextureCube '%s'...", filename.c_str());
+			if (startup) draw_loadinscreen_frame();
+			
+			begin = glfwGetTime();
+		}
+		
+		if (!load_textures()) {
+			con_logf_warning("\"%s\" could not be loaded!", filename.c_str());
+			return false;
+		}
+		
+		if (1) {
+			auto dt = glfwGetTime() -begin;
+			con_logf(">>> %f ms", dt * 1000);
+		}
+		
+		return true;
+	}
+	
+	virtual bool reload_if_needed () {
+		bool reloaded = srcf.poll_did_change();
+		if (!reloaded) return false;
+		
+		printf("Multi_File_TextureCube source file changed, reloading \"%s\".\n", filename.c_str());
+		
+		reloaded = load();
+		if (reloaded) {
+			upload();
+		}
+		return reloaded;
+	}
+	
+private:
+	bool load_textures () {
+		for (ui i=0; i<6; ++i) {
+			str ext;
+			get_fileext(srcf.v[i].filepath, &ext);
+			
+			if (ext.compare("dds") == 0) {
+				con_logf_warning("loading Multi_File_TextureCube with .dds files not supported, please save the cubemap as one .dds file");
+				return false;
+			}
+		}
+		return load_cubemap_faces_stb(srcf, cs, &type, &dim, &mips, &data);
+	}
+	
+	static bool load_cubemap_faces_stb (Source_Files const& filespath, src_color_space cs, pixel_type* type, iv2* dim, std::vector<Mip>* mips, Data_Block* data) {
+		stbi_set_flip_vertically_on_load(true); // OpenGL has textues bottom-up
+		
+		int n;
+		
+		byte* data_cur;
+		
+		u64 stride;
+		u64 face_size;
+		
+		for (ui i=0; i<6; ++i) {
+			int face_n;
+			iv2 face_dim;
+			
+			byte* face_data = stbi_load(filespath.v[i].filepath.c_str(), &face_dim.x, &face_dim.y, &face_n, 0);
+			if (!face_data) return false;
+			
+			if (i == 0) {
+				n = face_n;
+				*dim = face_dim;
+				
+				stride = (u64)dim->x * (u64)n;
+				face_size = (u64)dim->y * stride;
+				
+				*data = Data_Block::alloc(6 * face_size);
+				data_cur = data->data;
+			} else {
+				if (face_n != n || any(face_dim != *dim)) return false;
+			}
+			
+			memcpy(data_cur, face_data, face_size);
+			data_cur += face_size;
+			
+			free(face_data);
+		}
+		
+		switch (n) {
+			case 4: {
+				switch (cs) {
+					case CS_LINEAR:				*type = PT_LRGBA8;		break;
+					case CS_SRGB: case CS_AUTO:	*type = PT_SRGB8_LA8;	break;
+					default: dbg_assert(false);
+				}
+			} break;
+			case 3: {
+				switch (cs) {
+					case CS_LINEAR:				*type = PT_LRGB8;		break;
+					case CS_SRGB: case CS_AUTO:	*type = PT_SRGB8;		break;
+					default: dbg_assert(false);
+				}
+			} break;
+			default: dbg_assert(false);
+		}
+		
+		mips->resize(1);
+		(*mips)[0] = { data->data, data->size, *dim, stride, face_size };
+		
+		return true;
+	}
+
 };
 
 enum data_type {
@@ -551,24 +1003,33 @@ struct Shader {
 	Shader (strcr v, strcr f, std::vector<Uniform> const& u, std::vector<Uniform_Texture> const& t):
 			vert_filename{v}, frag_filename{f}, prog{0}, uniforms{u}, textures{t} {}
 	
+	~Shader () {
+		unload_program();
+		srcf.close_all();
+	}
+	
+	bool valid () {
+		return prog != 0;
+	}
+	
 	bool load () {
-		bool v = _load_shader_source(vert_filename, &vert_src);
-		bool f = _load_shader_source(frag_filename, &frag_src);
+		bool v = load_shader_source(vert_filename, &vert_src);
+		bool f = load_shader_source(frag_filename, &frag_src);
 		if (!v || !f) return false;
 		
-		bool res = _load_program();
+		bool res = load_program();
 		if (res) {
-			_get_uniform_locations();
-			_setup_uniform_textures();
+			get_uniform_locations();
+			setup_uniform_textures();
 		}
 		return res;
 	}
 	bool reload_if_needed () {
 		if (srcf.poll_did_change()) {
 			
-			con_logf("shader source changed, reloading shader \"%s\";\"%s\".\n", vert_filename.c_str(),frag_filename.c_str());
+			con_logf("shader source changed, reloading shader \"%s\";\"%s\".", vert_filename.c_str(),frag_filename.c_str());
 			
-			_unload_program();
+			unload_program();
 			
 			srcf.close_all();
 			srcf.v.clear();
@@ -576,11 +1037,6 @@ struct Shader {
 			return load();
 		}
 		return false;
-	}
-	
-	//
-	bool valid () {
-		return prog != 0;
 	}
 	
 	void bind () {
@@ -605,8 +1061,8 @@ struct Shader {
 		}
 	}
 	
-	//
-	bool _load_shader_source (strcr filename, str* src_text) {
+private:
+	bool load_shader_source (strcr filename, str* src_text) {
 		
 		{
 			str filepath = prints("%s%s", shaders_base_path, filename.c_str());
@@ -675,7 +1131,7 @@ struct Shader {
 						inc_filename = get_path_dir(filename).append(inc_filename);
 						
 						str inc_text;
-						if (!_load_shader_source(inc_filename, &inc_text)) return false;
+						if (!load_shader_source(inc_filename, &inc_text)) return false;
 						
 						auto line_begin_i = line_begin -src_text->begin();
 						
@@ -695,7 +1151,7 @@ struct Shader {
 		return true;
 	}
 	
-	static bool _get_shader_compile_log (GLuint shad, str* log) {
+	static bool get_shader_compile_log (GLuint shad, str* log) {
 		GLsizei log_len;
 		{
 			GLint temp = 0;
@@ -719,7 +1175,7 @@ struct Shader {
 			return true;
 		}
 	}
-	static bool _get_program_link_log (GLuint prog, str* log) {
+	static bool get_program_link_log (GLuint prog, str* log) {
 		GLsizei log_len;
 		{
 			GLint temp = 0;
@@ -744,7 +1200,7 @@ struct Shader {
 		}
 	}
 	
-	static bool _load_shader (GLenum type, strcr filename, strcr source, GLuint* shad) {
+	static bool load_shader (GLenum type, strcr filename, strcr source, GLuint* shad) {
 		*shad = glCreateShader(type);
 		
 		{
@@ -760,7 +1216,7 @@ struct Shader {
 			glGetShaderiv(*shad, GL_COMPILE_STATUS, &status);
 			
 			str log_str;
-			bool log_avail = _get_shader_compile_log(*shad, &log_str);
+			bool log_avail = get_shader_compile_log(*shad, &log_str);
 			
 			success = status == GL_TRUE;
 			if (!success) {
@@ -776,16 +1232,16 @@ struct Shader {
 		
 		return success;
 	}
-	bool _load_program () {
+	bool load_program () {
 		
 		prog = glCreateProgram();
 		
 		GLuint vert;
 		GLuint frag;
 		
-		if (	!_load_shader(GL_VERTEX_SHADER,		vert_filename, vert_src, &vert) ||
-				!_load_shader(GL_FRAGMENT_SHADER,	frag_filename, frag_src, &frag)) {
-			_unload_program();
+		if (	!load_shader(GL_VERTEX_SHADER,		vert_filename, vert_src, &vert) ||
+				!load_shader(GL_FRAGMENT_SHADER,	frag_filename, frag_src, &frag)) {
+			unload_program();
 			prog = 0;
 			return false;
 		}
@@ -801,7 +1257,7 @@ struct Shader {
 			glGetProgramiv(prog, GL_LINK_STATUS, &status);
 			
 			str log_str;
-			bool log_avail = _get_program_link_log(prog, &log_str);
+			bool log_avail = get_program_link_log(prog, &log_str);
 			
 			success = status == GL_TRUE;
 			if (!success) {
@@ -823,28 +1279,23 @@ struct Shader {
 		
 		return success;
 	}
-	void _unload_program () {
+	void unload_program () {
 		glDeleteProgram(prog); // 0 for prog is valid (silently ignored)
 	}
 	
-	void _get_uniform_locations () {
+	void get_uniform_locations () {
 		for (auto& u : uniforms) {
 			u.loc = glGetUniformLocation(prog, u.name);
 			//if (u.loc <= -1) log_warning("Uniform not valid %s!", u.name);
 		}
 	}
-	void _setup_uniform_textures () {
+	void setup_uniform_textures () {
 		glUseProgram(prog);
 		for (auto& t : textures) {
 			t.loc = glGetUniformLocation(prog, t.name);
 			//if (t.loc <= -1) log_warning("Uniform Texture not valid '%s'!", t.name);
 			glUniform1i(t.loc, t.tex_unit);
 		}
-	}
-	
-	~Shader () {
-		_unload_program();
-		srcf.close_all();
 	}
 	
 };
@@ -867,7 +1318,7 @@ struct Vertex_Layout {
 		for (auto& a : attribs) {
 			
 			GLint loc = glGetAttribLocation(shad->prog, a.name);
-			//if (loc <= -1) log_warning("Attribute %s is not used in the shader!", a.name);
+			//if (loc <= -1) con_logf_warning("Attribute %s is not used in the shader!", a.name);
 			
 			if (loc != -1) {
 				dbg_assert(loc > -1);
@@ -921,6 +1372,10 @@ struct Vbo {
 		glGenBuffers(1, &vbo_indx);
 		
 	}
+	~Vbo () {
+		glDeleteBuffers(1, &vbo_vert);
+		glDeleteBuffers(1, &vbo_indx);
+	}
 	
 	void clear () {
 		vertecies.clear();
@@ -968,3 +1423,31 @@ struct Vbo {
 		}
 	}
 };
+
+static Shader* shad_equirectangular_to_cubemap;
+
+void File_TextureCube::gpu_convert_equirectangular_to_cubemap () {
+	
+	shad_equirectangular_to_cubemap->bind();
+	bind_texture_unit(0, equirect);
+	
+	GLuint fbo;
+	glGenFramebuffers(1, &fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	
+	glViewport(0,0, dim.x,dim.y);
+	
+	for (ui face_i=0; face_i<6; ++face_i) {
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X +face_i, tex, 0);
+		
+		{
+			auto ret = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+			dbg_assert(ret == GL_FRAMEBUFFER_COMPLETE);
+		}
+		
+		glDrawArrays(GL_TRIANGLES, face_i * 6, 6);
+	}
+	
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glDeleteFramebuffers(1, &fbo);
+}

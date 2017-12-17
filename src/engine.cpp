@@ -34,7 +34,8 @@ typedef fhm		hm;
 #define STBI_ONLY_BMP	1
 #define STBI_ONLY_PNG	1
 #define STBI_ONLY_TGA	1
-//#define STBI_ONLY_JPEG	1
+#define STBI_ONLY_JPEG	1
+#define STBI_ONLY_HDR	1
 
 #include "stb_image.h"
 
@@ -84,7 +85,7 @@ static cstr shaders_base_path =		"shaders/";
 static cstr meshes_base_path =		"assets_src";
 static cstr textures_base_path =	"assets_src";
 
-struct Tracked_File {
+struct Source_File {
 	str			filepath;
 	
 	HANDLE		fh;
@@ -132,7 +133,7 @@ struct Tracked_File {
 };
 
 struct Source_Files {
-	std::vector<Tracked_File>	v;
+	std::vector<Source_File>	v;
 	
 	bool poll_did_change () {
 		for (auto& i : v) if (i.poll_did_change()) return true;
@@ -151,16 +152,17 @@ static void draw_loadinscreen_frame ();
 #include "gl.hpp"
 #include "font.hpp"
 
-static font::Font console_font;
+static font::Font* console_font;
 
 #define UV2(name)	Uniform(T_V2, name)
 #define UV3(name)	Uniform(T_V3, name)
 #define UM4(name)	Uniform(T_M4, name)
 
-static std::vector<Shader*>		shaders;
-static std::vector<Texture2D*>	textures;
+static std::vector<Shader*>			shaders;
+static std::vector<Texture2D*>		textures2d;
+static std::vector<TextureCube*>	texturesCube;
 
-static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std::initializer_list<Shader::Uniform_Texture> t={}) {
+static Shader* new_shader (strcr v, strcr f, std::initializer_list<Uniform> u, std::initializer_list<Shader::Uniform_Texture> t={}) {
 	Shader* s = new Shader(v,f,u,t);
 	
 	s->load(); // NOTE: Load shaders instantly on creation
@@ -169,9 +171,28 @@ static Shader* new_shader (cstr v, cstr f, std::initializer_list<Uniform> u, std
 	return s;
 }
 
-static Texture2D* new_texture2d (cstr filename, bool linear=false) {
-	File_Texture2D* t = new File_Texture2D(filename, linear);
-	textures.push_back(t);
+static Texture2D* new_texture2d (strcr filename, src_color_space cs=CS_AUTO) {
+	auto* t = new File_Texture2D(cs, filename);
+	textures2d.push_back(t);
+	return t;
+}
+static File_TextureCube* new_textureCube (strcr filename, src_color_space cs=CS_AUTO) {
+	auto* t = new File_TextureCube(cs, filename);
+	texturesCube.push_back(t);
+	return t;
+}
+static TextureCube* new_textureCube (strcr filename_format, std::array<cstr, 6>const& face_codes, src_color_space cs=CS_AUTO) {
+	auto repl = filename_format.find('$');
+	dbg_assert(repl != filename_format.npos);
+	
+	std::array<str, 6> face_filenames;
+	for (ui i=0; i<6; ++i) {
+		face_filenames[i] = filename_format;
+		face_filenames[i].replace(repl, 1, face_codes[i]);
+	}
+	
+	auto* t = new Multi_File_TextureCube(cs, filename_format, face_filenames);
+	texturesCube.push_back(t);
 	return t;
 }
 
@@ -179,7 +200,7 @@ static Texture2D* new_texture2d (cstr filename, bool linear=false) {
 struct Mesh_Vertex {
 	v3	pos_model;
 	v3	norm_model;
-	v4	tanmodel;
+	v4	tang_model;
 	v2	uv;
 	v4	col;
 	
@@ -194,7 +215,7 @@ static constexpr v4 DEFAULT_COL =	1;
 static Vertex_Layout mesh_vert_layout = {
 	{ "pos_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, pos_model) },
 	{ "norm_model",	T_V3, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, norm_model) },
-	{ "tanmodel",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tanmodel) },
+	{ "tang_model",	T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, tang_model) },
 	{ "uv",			T_V2, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, uv) },
 	{ "col",		T_V4, sizeof(Mesh_Vertex), offsetof(Mesh_Vertex, col) }
 };
@@ -202,24 +223,9 @@ static Vertex_Layout mesh_vert_layout = {
 #include "mesh_loader.hpp"
 #include "shapes.hpp"
 
-static constexpr GLint MAX_TEXTURE_UNIT = 8; // for debugging only, to unbind textures from unused texture units
-
-static void bind_texture_unit (GLint tex_unit, Texture2D* tex) {
-	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT, "increase MAX_TEXTURE_UNIT (%d, tex_unit: %d)", MAX_TEXTURE_UNIT, tex_unit);
-	
-	glActiveTexture(GL_TEXTURE0 +tex_unit);
-	glBindTexture(GL_TEXTURE_2D, tex->tex);
-}
-static void unbind_texture_unit (GLint tex_unit) {
-	dbg_assert(tex_unit >= 0 && tex_unit < MAX_TEXTURE_UNIT);
-	
-	glActiveTexture(GL_TEXTURE0 +tex_unit);
-	glBindTexture(GL_TEXTURE_2D, 0);
-}
-
 struct Allotted_Texture {
 	GLint		tex_unit;
-	Texture2D*	tex;
+	Texture*	tex;
 	
 	void bind () {
 		bind_texture_unit(tex_unit, tex);
@@ -234,7 +240,7 @@ static std::vector<Base_Mesh*>		meshes_opaque;
 static std::vector<Base_Mesh*>		meshes_translucent;
 
 struct Base_Mesh {
-	cstr		name;
+	str		name;
 	
 	v3			pos_world;
 	m3			ori;
@@ -247,7 +253,7 @@ struct Base_Mesh {
 	
 	std::vector<Allotted_Texture>	textures;
 	
-	Base_Mesh (cstr n, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+	Base_Mesh (strcr n, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
 		name = n;
 		
 		pos_world = p;
@@ -290,9 +296,9 @@ struct File_Mesh : public Base_Mesh {
 	
 	str				filename;
 	
-	Tracked_File	srcf;
+	Source_File		srcf;
 	
-	File_Mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}):
+	File_Mesh (strcr n, strcr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, s2, p, o, t} {
 		
 		filename = f;
@@ -323,7 +329,7 @@ struct File_Mesh : public Base_Mesh {
 	virtual bool reload_if_needed () {
 		bool reloaded = srcf.poll_did_change();
 		if (reloaded) {
-			con_logf("mesh source file changed, reloading mesh \"%s\".\n", filename);
+			con_logf("mesh source file changed, reloading mesh \"%s\".\n", filename.c_str());
 			load();
 			vbo.upload();
 		}
@@ -336,12 +342,12 @@ struct File_Mesh : public Base_Mesh {
 	}
 	
 };
-File_Mesh* new_mesh (cstr n, cstr f, Shader* s, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+File_Mesh* new_mesh (strcr n, strcr f, Shader* s, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new File_Mesh(n,f,s,nullptr,p,o,t);
 	meshes_opaque.push_back(m);
 	return m;
 }
-File_Mesh* new_transp_mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
+File_Mesh* new_transp_mesh (strcr n, strcr f, Shader* s, Shader* s2, v3 p, m3 o, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new File_Mesh(n,f,s,s2,p,o,t);
 	meshes_translucent.push_back(m);
 	return m;
@@ -349,18 +355,18 @@ File_Mesh* new_transp_mesh (cstr n, cstr f, Shader* s, Shader* s2, v3 p, m3 o, s
 
 struct Gen_Mesh_Floor : public Base_Mesh {
 	
-	Gen_Mesh_Floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}):
+	Gen_Mesh_Floor (strcr n, Shader* s, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, nullptr, 0, m3::ident(), t} {}
 	void gen () { gen_tile_floor(&vbo.vertecies); };
 	
 	virtual void load () {
 		vbo.clear();
-		con_logf("Generating mesh for %s...", name);
+		con_logf("Generating mesh for %s...", name.c_str());
 		gen();
 	}
 	virtual bool reload_if_needed () { return false; }
 };
-Gen_Mesh_Floor* new_gen_tile_floor (cstr n, Shader* s, std::initializer_list<Allotted_Texture> t={}) {
+Gen_Mesh_Floor* new_gen_tile_floor (strcr n, Shader* s, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Floor(n,s,t);
 	meshes_opaque.push_back(m);
 	return m;
@@ -369,7 +375,7 @@ Gen_Mesh_Floor* new_gen_tile_floor (cstr n, Shader* s, std::initializer_list<All
 struct Gen_Mesh_Tetrahedron : public Base_Mesh {
 	f32		radius;
 	
-	Gen_Mesh_Tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
+	Gen_Mesh_Tetrahedron (strcr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {}
 	void gen () { gen_tetrahedron(&vbo.vertecies, radius); };
 	
@@ -379,7 +385,7 @@ struct Gen_Mesh_Tetrahedron : public Base_Mesh {
 	}
 	virtual bool reload_if_needed () { return false; }
 };
-Gen_Mesh_Tetrahedron* new_gen_tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
+Gen_Mesh_Tetrahedron* new_gen_tetrahedron (strcr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Tetrahedron(n,s,p,o,r,t);
 	meshes_opaque.push_back(m);
 	return m;
@@ -388,7 +394,7 @@ Gen_Mesh_Tetrahedron* new_gen_tetrahedron (cstr n, Shader* s, v3 p, m3 o, f32 r,
 struct Gen_Mesh_Cube : public Base_Mesh {
 	f32		radius;
 	
-	Gen_Mesh_Cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
+	Gen_Mesh_Cube (strcr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, nullptr, p,o, t}, radius{r} {}
 	void gen () { gen_cube(&vbo.vertecies, radius); };
 	
@@ -398,7 +404,7 @@ struct Gen_Mesh_Cube : public Base_Mesh {
 	}
 	virtual bool reload_if_needed () { return false; }
 };
-Gen_Mesh_Cube* new_gen_cube (cstr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
+Gen_Mesh_Cube* new_gen_cube (strcr n, Shader* s, v3 p, m3 o, f32 r, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Cube(n,s,p,o,r,t);
 	meshes_opaque.push_back(m);
 	return m;
@@ -409,7 +415,7 @@ struct Gen_Mesh_Cylinder : public Base_Mesh {
 	f32		length;
 	u32		faces;
 	
-	Gen_Mesh_Cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces, std::initializer_list<Allotted_Texture> t={}):
+	Gen_Mesh_Cylinder (strcr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 faces, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, length{l}, faces{faces} {}
 	void gen () { gen_cylinder(&vbo.vertecies, radius, length, faces); };
 	
@@ -419,7 +425,7 @@ struct Gen_Mesh_Cylinder : public Base_Mesh {
 	}
 	virtual bool reload_if_needed () { return false; }
 };
-Gen_Mesh_Cylinder* new_gen_cylinder (cstr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 f, std::initializer_list<Allotted_Texture> t={}) {
+Gen_Mesh_Cylinder* new_gen_cylinder (strcr n, Shader* s, v3 p, m3 o, f32 r, f32 l, u32 f, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Cylinder(n,s,p,o,r,l,f,t);
 	meshes_opaque.push_back(m);
 	return m;
@@ -430,7 +436,7 @@ struct Gen_Mesh_Iso_Sphere : public Base_Mesh {
 	u32		wfaces;
 	u32		hfaces;
 	
-	Gen_Mesh_Iso_Sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}):
+	Gen_Mesh_Iso_Sphere (strcr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}):
 			Base_Mesh{n, s, nullptr, p,o, t}, radius{r}, wfaces{fw}, hfaces{fh} {}
 	void gen () { gen_iso_sphere(&vbo.vertecies, radius, wfaces, hfaces); };
 	
@@ -440,7 +446,7 @@ struct Gen_Mesh_Iso_Sphere : public Base_Mesh {
 	}
 	virtual bool reload_if_needed () { return false; }
 };
-Gen_Mesh_Iso_Sphere* new_gen_iso_sphere (cstr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}) {
+Gen_Mesh_Iso_Sphere* new_gen_iso_sphere (strcr n, Shader* s, v3 p, m3 o, f32 r, u32 fw, u32 fh, std::initializer_list<Allotted_Texture> t={}) {
 	auto* m = new Gen_Mesh_Iso_Sphere(n,s,p,o,r,fw,fh,t);
 	meshes_opaque.push_back(m);
 	return m;
@@ -574,7 +580,7 @@ static void glfw_mouse_scroll (GLFWwindow* window, double xoffset, double yoffse
 	if (!inp.move_fast) {
 		f32 delta_log = 0.1f * (f32)yoffset;
 		cam.fly_vel = pow( 2, log2(cam.fly_vel) +delta_log );
-		con_logf(">>> fly_vel: %f\n", cam.fly_vel);
+		con_logf(">>> fly_vel: %f", cam.fly_vel);
 	} else {
 		f32 delta_log = -0.1f * (f32)yoffset;
 		f32 vfov = pow( 2, log2(cam.vfov) +delta_log );
@@ -592,19 +598,19 @@ static Shader*	shad_font;
 static void draw_console_log_text (v4 text_col) {
 	vbo_console_font.clear();
 	
-	u32 max_fully_visible_lines = max( (u32)1, (u32)floor((f32)inp.wnd_dim.y / console_font.line_height) );
+	u32 max_fully_visible_lines = max( (u32)1, (u32)floor((f32)inp.wnd_dim.y / console_font->line_height) );
 	
 	u32 max_buffered_lines = 1000;
 	if (console_log_lines.size() > max_buffered_lines) { // only keep at most max_buffered_lines lines
 		console_log_lines.erase( console_log_lines.begin(), console_log_lines.begin() +(console_log_lines.size() -max_buffered_lines));
 	}
 	
-	f32 pos_y_px = console_font.ascent_plus_gap;
+	f32 pos_y_px = console_font->ascent_plus_gap;
 	
 	for (auto l = console_log_lines.begin() +max((s32)0, (s32)console_log_lines.size() -(s32)max_fully_visible_lines);
 			l!=console_log_lines.end(); ++l) {
-		console_font.draw_line(&vbo_console_font.vertecies, pos_y_px, shad_font, *l, text_col);
-		pos_y_px += console_font.line_height;
+		console_font->draw_line(&vbo_console_font.vertecies, pos_y_px, shad_font, *l, text_col);
+		pos_y_px += console_font->line_height;
 	}
 	
 	if (shad_font->valid()) {
@@ -614,7 +620,7 @@ static void draw_console_log_text (v4 text_col) {
 		
 		shad_font->bind();
 		shad_font->set_unif("screen_dim", (v2)inp.wnd_dim);
-		bind_texture_unit(0, &console_font.tex);
+		bind_texture_unit(0, &console_font->tex);
 		
 		vbo_console_font.upload();
 		vbo_console_font.draw_entire(shad_font);
@@ -634,6 +640,8 @@ static void draw_loadinscreen_frame () {
 	glfwPollEvents();
 	
 	inp.get_non_callback_input();
+	
+	glViewport(0,0, inp.wnd_dim.x,inp.wnd_dim.y);
 	
 	v4 clear_color = v4(srgb(41,49,52)*3, 1);
 	glClearColor(clear_color.x,clear_color.y,clear_color.z,clear_color.w);
@@ -673,12 +681,16 @@ int main (int argc, char** argv) {
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &max_aniso);
+		
+		glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 	}
 	
 	startup = true;
 	
 	#define UCOM UV2("screen_dim"), UV2("mcursor_pos") // common uniforms
 	#define UMAT UM4("model_to_world"), UM4("world_to_cam"), UM4("cam_to_clip"), UM4("cam_to_world") // transformation uniforms
+	
+	shad_equirectangular_to_cubemap = new_shader("equirectangular_to_cubemap.vert",	"equirectangular_to_cubemap.frag", {UCOM}, {{0,"equirectangular"}});
 	
 	{ // init game console overlay
 		f32 sz =	16; // 14 16 24
@@ -692,7 +704,7 @@ int main (int argc, char** argv) {
 			{ "meiryo.ttc",		jpsz,	{ U'　',U'、',U'。',U'”',U'「',U'」' } }, // some jp puncuation
 		};
 		
-		console_font.init(sz, ranges);
+		console_font = new font::Font(sz, ranges);
 		
 		vbo_console_font.init(&font::mesh_vert_layout);
 		shad_font = new_shader("font.vert", "font.frag", {UCOM}, {{0,"glyphs"}});
@@ -701,12 +713,26 @@ int main (int argc, char** argv) {
 	//
 	
 	auto* shad_skybox =				new_shader("skybox.vert",		"skybox.frag",			{UCOM, UM4("skybox_to_clip")});
-	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",		{UCOM, UV2("tex_dim")}, {{0,"tex0"}});
+	auto* shad_overlay_tex =		new_shader("overlay_tex.vert",	"overlay_tex.frag",		{UCOM, UV2("pos_clip"), UV2("size_clip")}, {{0,"tex0"}});
+	auto* shad_overlay_cubemap =	new_shader("overlay_tex.vert",	"overlay_cubemap.frag",	{UCOM, UV2("pos_clip"), UV2("size_clip")}, {{0,"tex0"}});
 	
-	auto* tex_test =				new_texture2d("test/fast.png");
-	//auto* tex_test =				new_texture2d("test/haha.dds");
-	//auto* tex_test =				new_texture2d("test/test.dds");
+	auto* tex_test =				new_texture2d("test/thinkin.png");
+	auto* tex_haha =				new_texture2d("test/haha.dds");
+	auto* tex_fast =				new_texture2d("test/fast.png");
 	
+	std::array<cstr, 6> HUMUS_CUBEMAP_FACE_CODES = {
+		"posx",
+		"negx",
+		"negy", // opengl has the y faces in the wrong order for some reason
+		"posy",
+		"posz",
+		"negz",
+	};
+	
+	auto* tex_test_cubemap1 =		new_textureCube("env_maps/humus/CNTower/$.jpg", HUMUS_CUBEMAP_FACE_CODES);
+	auto* tex_test_cubemap2 =		new_textureCube("env_maps/sibl/Alexs_Apartment/2k.hdr");
+	
+	/*
 	{ // Generated meshes
 		auto* shad_vc =			new_shader("mesh_vertex.vert",	"vertex_color.frag",	{UCOM, UMAT});
 		auto* shad_diff =		new_shader("mesh_vertex.vert",	"diffuse.frag",			{UCOM, UMAT}, {{0,"tex0"}});
@@ -829,12 +855,15 @@ int main (int argc, char** argv) {
 			new_mesh("sword L",		"nier/sword_large.obj",		shad,	v3(-4,-2,0),	rotate3_Z(deg(90)),	texs);
 		}
 	}
+	*/
 	
-	for (auto* i : meshes)		i->load();
-	for (auto* i : textures)	i->load();
+	for (auto* i : meshes)			i->load();
+	for (auto* i : textures2d)		i->load();
+	for (auto* i : texturesCube)	i->load();
 	
-	for (auto* i : meshes)		i->vbo.upload();
-	for (auto* i : textures)	i->upload();
+	for (auto* i : meshes)			i->vbo.upload();
+	for (auto* i : textures2d)		i->upload();
+	for (auto* i : texturesCube)	i->upload();
 	
 	startup = false;
 	
@@ -864,9 +893,14 @@ int main (int argc, char** argv) {
 		
 		if (glfwWindowShouldClose(wnd)) break;
 		
-		for (auto* s : shaders)		s->reload_if_needed();
-		for (auto* t : textures)	t->reload_if_needed();
-		for (auto* m : meshes)		m->reload_if_needed();
+		if (shad_equirectangular_to_cubemap->reload_if_needed()) {
+			tex_test_cubemap2->srcf.last_change_t = {}; // HACK
+		}
+		
+		for (auto* s : shaders)			s->reload_if_needed();
+		for (auto* m : meshes)			m->reload_if_needed();
+		for (auto* t : textures2d)		t->reload_if_needed();
+		for (auto* t : texturesCube)	t->reload_if_needed();
 		
 		hm world_to_cam;
 		hm cam_to_world;
@@ -1006,22 +1040,83 @@ int main (int argc, char** argv) {
 			}
 		}
 		
-		if (shad_overlay_tex->valid()) {
-			glEnable(GL_BLEND);
-			glDisable(GL_DEPTH_TEST);
-			glDisable(GL_CULL_FACE);
+		{
+			v2 LL = v2(0,0);
+			v2 LR = v2(1,0);
+			v2 UL = v2(0,1);
+			v2 UR = v2(1,1);
 			
-			shad_overlay_tex->bind();
-			shad_overlay_tex->set_unif("tex_dim", (v2)tex_test->dim);
-			bind_texture_unit(0, tex_test);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
+			auto draw_overlay_tex2d = [&] (Texture2D* tex, v2 pos01, v2 size_multiplier=1) {
+				if (!shad_overlay_tex->valid()) {
+					dbg_assert(false);
+					return;
+				}
+				
+				v2 size_screen = (v2)tex->dim * size_multiplier;
+				v2 size_clip = size_screen / ((v2)inp.wnd_dim / 2);
+				
+				// pos is the lower left corner of the quad
+				v2 pos_screeen = ((v2)inp.wnd_dim -size_screen) * pos01; // [0,1] => [touches ll corner of screen, touches ur corner of screen]
+				
+				v2 pos_clip = (pos_screeen / (v2)inp.wnd_dim) * 2 -1;
+				
+				glEnable(GL_BLEND);
+				glDisable(GL_DEPTH_TEST);
+				glDisable(GL_CULL_FACE);
+				
+				shad_overlay_tex->bind();
+				shad_overlay_tex->set_unif("pos_clip", pos_clip);
+				shad_overlay_tex->set_unif("size_clip", size_clip);
+				bind_texture_unit(0, tex);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
+				
+				glEnable(GL_CULL_FACE);
+				glEnable(GL_DEPTH_TEST);
+				glDisable(GL_BLEND);
+			};
+			auto draw_overlay_texCube = [&] (Texture* tex, v2 pos01, v2 size_px) {
+				if (!shad_overlay_cubemap->valid()) {
+					dbg_assert(false);
+					return;
+				}
+				
+				v2 size_screen = size_px;
+				v2 size_clip = size_screen / ((v2)inp.wnd_dim / 2);
+				
+				// pos is the lower left corner of the quad
+				v2 pos_screeen = ((v2)inp.wnd_dim -size_screen) * pos01; // [0,1] => [touches ll corner of screen, touches ur corner of screen]
+				
+				v2 pos_clip = (pos_screeen / (v2)inp.wnd_dim) * 2 -1;
+				
+				glEnable(GL_BLEND);
+				glDisable(GL_DEPTH_TEST);
+				glDisable(GL_CULL_FACE);
+				
+				shad_overlay_cubemap->bind();
+				shad_overlay_cubemap->set_unif("pos_clip", pos_clip);
+				shad_overlay_cubemap->set_unif("size_clip", size_clip);
+				bind_texture_unit(0, tex);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
+				
+				glEnable(GL_CULL_FACE);
+				glEnable(GL_DEPTH_TEST);
+				glDisable(GL_BLEND);
+			};
 			
-			glEnable(GL_CULL_FACE);
-			glEnable(GL_DEPTH_TEST);
-			glDisable(GL_BLEND);
+			if (shad_overlay_tex->valid()) {
+				//draw_overlay_tex2d(tex_test, LL);
+				//draw_overlay_tex2d(tex_haha, UL);
+				//draw_overlay_tex2d(tex_fast, LR);
+				
+				draw_overlay_tex2d(tex_test_cubemap2->equirect, LL, 1.0f/4);
+			}
+			if (shad_overlay_cubemap->valid()) {
+				draw_overlay_texCube(tex_test_cubemap1, UR, (v2)min(inp.wnd_dim.x, inp.wnd_dim.y) / 2);
+				draw_overlay_texCube(tex_test_cubemap2, UL, (v2)min(inp.wnd_dim.x, inp.wnd_dim.y) / 2);
+			}
 		}
 		
-		if (1) draw_console_log_text(v4(0,0,0, 1));
+		if (0) draw_console_log_text(v4(0,0,0, 1));
 		
 		glfwSwapBuffers(wnd);
 		

@@ -40,7 +40,7 @@ void main () {
 	
 	vec4 col = vec4( sky(mat3(cam_to_world) * refl_cam), 1 );
 	
-	//col *= alb * vs_col;
+	col *= alb * vs_col;
 	col = alb;
 	
 	//if (SPLIT_BOTTOM) {

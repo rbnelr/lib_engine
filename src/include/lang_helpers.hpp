@@ -99,6 +99,17 @@ template<> constexpr bool _safe_cast<s32, u64> (u64 x) { return x <= 0x7fffffffu
 
 #define BOOL_XOR(a, b)	(((a) != 0) == ((b) != 0))
 
+static u32 round_up_to_pot (u32 i) {
+	--i;
+	i |= i >> 1;
+	i |= i >> 2;
+	i |= i >> 4;
+	i |= i >> 8;
+	i |= i >> 16;
+	++i;
+	return i;
+}
+
 static u32 strlen (utf32 const* str) {
 	u32 ret = 0;
 	while (*str++) ++ret;
@@ -216,15 +227,31 @@ static std::string prints (cstr format, ...) {
 	return ret;
 }
 
-// "foo/bar/README.txt" -> "foo/bar/"
-// "README.txt" -> ""
-// "" -> ""
-static std::string get_path_dir (std::string const& path) {
+// "foo/bar/README.txt"	-> "foo/bar/"
+// "README.txt"			-> ""
+// ""					-> ""
+static str get_path_dir (strcr path) {
 	auto last_slash = path.begin();
 	for (auto ch=path.begin(); ch!=path.end(); ++ch) {
 		if (*ch == '/') last_slash = ch +1;
 	}
 	return std::string(path.begin(), last_slash);
+}
+// "foo/bar/README.txt"	-> return true; ext = "txt"
+// "README.txt"			-> return true; ext = "txt"
+// "README."			-> return true; ext = ""
+// "README"				-> return false;
+// ""					-> return false;
+// ".ext"				-> return true; ext = "ext";
+static bool get_fileext (strcr path, str* ext) {
+	for (auto c = path.end(); c != path.begin();) {
+		--c;
+		if (*c == '.') {
+			*ext = str(c +1, path.end());
+			return true;
+		}
+	}
+	return false;
 }
 
 static u64 get_file_size (FILE* f) {
@@ -239,11 +266,11 @@ struct Data_Block {
 	u64			size;
 	
 	void free () {
-		::free(data);
+		delete[] data;
 	}
 	
 	static Data_Block alloc (u64 s) {
-		return { (byte*)malloc(s), s };
+		return { new byte[s], s };
 	}
 };
 

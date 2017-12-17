@@ -252,7 +252,7 @@ namespace std {
 	template<> struct hash<Mesh_Vertex> {
 		size_t operator() (Mesh_Vertex const& v) const {
 			// tangents are not calculated at this point (we always calculate them ourself)
-			dbg_assert(all(v.tanmodel == DEFAULT_TANG));
+			dbg_assert(all(v.tang_model == DEFAULT_TANG));
 			return	hash<v3>()(v.pos_model) ^
 					hash<v3>()(v.norm_model) ^
 					hash<v2>()(v.uv) ^
@@ -496,7 +496,7 @@ static bool load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 				
 				u.v.pos_model =		tri_has_pos ?	transform * poss[t.arr[i].pos -1]	:	DEFAULT_POS;
 				u.v.norm_model =	tri_has_norm ?	normalize(norms[t.arr[i].norm -1])	:	DEFAULT_NORM;
-				u.v.tanmodel =															DEFAULT_TANG;
+				u.v.tang_model =															DEFAULT_TANG;
 				u.v.uv =			tri_has_uv ?	uvs[t.arr[i].uv -1]					:	DEFAULT_UV;
 				u.v.col =																	DEFAULT_COL;
 				
@@ -639,15 +639,16 @@ static bool load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 			
 			if (count == 0) {
 				//con_logf_warning("mesh_loader:: Vertex was part of only degenerate triangles [%llu] in mesh '%s'!", v_i, filepath);
-				vert[v_i].tanmodel = DEFAULT_TANG;
 				//vert[v_i].col *= v4(1,1,0,1);
+				
+				vert[v_i].tang_model = DEFAULT_TANG;
 			} else {
 				// average tangent and bitangent
 				v3 avg_tang = total_tang / (f32)count;
 				v3 avg_bitang = total_bitang / (f32)count;
 				
 				if (length(avg_tang) < 0.05f || length(avg_bitang) < 0.05f) { // vectors could cancel out
-					//con_logf_warning();
+					//con_logf_warning("mesh_loader:: tangent vectors (almost) cancel out (%g, %g) [%llu] in mesh '%s'!", length(avg_tang), length(avg_bitang), v_i, filepath);
 					//vert[v_i].col *= v4(0,1,0,1);
 				}
 				
@@ -658,7 +659,9 @@ static bool load_mesh (Vbo* vbo, cstr filepath, hm transform) {
 				
 				f32 bitansign = calc_bitansign(avg_tang, avg_bitang, norm);
 				
-				vert[v_i].tanmodel = v4(avg_tang, bitansign);
+				vert[v_i].tang_model = v4(avg_tang, bitansign);
+				
+				if (!equal_epsilon(length(vert[v_i].tang_model.xyz()), 1, 0.01f) || abs(vert[v_i].tang_model.w) > 1) dbg_assert(false);
 			}
 			
 		}
